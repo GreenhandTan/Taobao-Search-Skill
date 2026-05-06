@@ -77,13 +77,15 @@ flowchart TB
 
 | Skill 要素 | 本项目的实现 |
 |------------|-------------|
+| **合规声明** | 仅用于自有账号，禁止滥用 |
 | **角色定义** | §0「你是决策者，taobao.py 是你的执行手脚」 |
-| **意图理解** | §1 参数提取表 + 自然语言示例 |
-| **执行协议** | §2 四步执行法（构造→执行→解读→决策） |
-| **决策框架** | §4 筛选决策 + §5 异常决策树 |
-| **中断处理** | §3 登录/验证码的多轮交互流程 |
-| **汇报模板** | §4 分类汇报格式（达标/不达标/未知/失败） |
-| **参考手册** | §6 常用操作 + §7 失败码 |
+| **前置检查** | 会话状态、依赖可用性、人工接管模式选择 |
+| **意图理解** | §1 13 参数提取表 + 规则 + 默认值 + 示例 |
+| **执行协议** | §2 三步执行法（构造→执行→解读→按 status 决策） |
+| **中断处理** | §3 登录/验证码多轮交互 + 重试上限 + clear-session 兜底 |
+| **决策框架** | §4 好评率分类 + 筛选判断 + 主动建议 + §5 异常决策树 |
+| **汇报模板** | §4 达标/不达标/未知/失败四类格式 |
+| **参考手册** | §6 常用操作 + 失败码表 + 依赖 + 多平台部署 |
 
 对比普通脚本包装：脚本包装只告诉你 `run this command`；Skill 告诉你 `understand the user, decide parameters, interpret results, classify, report`。
 
@@ -162,7 +164,7 @@ python scripts/taobao.py search --keyword "鼠标" --headless --no-manual-approv
 ## 项目结构
 
 ```
-SKILL.md                          # Agent 大脑指令（意图理解、执行协议、决策框架、汇报模板）
+SKILL.md                          # Agent 行为指令集（合规声明 + 角色定义 + 前置检查 + 意图理解 + 执行协议 + 中断处理 + 决策框架 + 汇报模板 + 多平台部署）
 scripts/
 ├── taobao.py                     # 统一 CLI 入口（search / resume / check-session / clear-session）
 ├── browser_adapter.py            # 浏览器自动化（Playwright + stealth + 拟人化 + 数据提取）
@@ -184,9 +186,9 @@ tests/
 ## 工作流
 
 ```
-用户描述需求 → Agent 理解意图 → 构造参数 → exec taobao.py search
+用户描述需求 → Agent 前置检查(会话/依赖) → 理解意图 → 构造参数 → exec taobao.py search
     → taobao.py: 恢复会话→登录检测→搜索→全量提取数据→加购→返回JSON(含好评率)
-    → Agent 解读 JSON → 按好评率分类(达标/不达标/未知) → 向用户汇报
+    → Agent 解读 JSON → 按好评率分类(达标/不达标/未知/失败) → 向用户汇报
     → [如需登录/验证] Agent 通知用户 → 用户完成后 → exec taobao.py resume
 ```
 
