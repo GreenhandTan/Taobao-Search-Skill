@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import random
 import re
@@ -20,8 +21,7 @@ from taobao_selectors import (
     LOGIN_PAGE_URL_SIGNALS, MIDDLEWARE_OVERLAY_HIDE_JS, NOT_LOGGED_IN_TEXT,
     POPUP_CLOSE_BUTTONS, PRICE_SELECTORS, PRODUCT_CARD_CLIMB_SELECTORS,
     PRODUCT_LINK_SELECTORS, RATING_SELECTORS, SALES_COUNT_SELECTORS,
-    SEARCH_INPUT, SEARCH_SUBMIT, SKU_CONTAINER_SELECTORS, SKU_GROUP_JS_SELECTORS,
-    SKU_ITEM_JS_SELECTORS, SKU_OPTION_SELECTORS, SKU_VALUE_SELECTOR,
+    SEARCH_INPUT, SEARCH_SUBMIT, SKU_OPTION_SELECTORS, SKU_VALUE_SELECTOR,
 )
 from session_manager import SessionSnapshot
 from slider_solver import SliderSolver
@@ -414,7 +414,7 @@ class BrowserAdapter:
     # Candidate Collection & Cart
     # ──────────────────────────────────────────────
 
-    def collect_candidates(self, keyword: str, max_candidates: int, rating_threshold: float,
+    def collect_candidates(self, keyword: str, max_candidates: int,
                            price_min: float | None = None, price_max: float | None = None,
                            min_sales: int | None = None, require_free_shipping: bool = False,
                            require_tmall: bool | None = None) -> list[MatchedItem]:
@@ -498,18 +498,17 @@ class BrowserAdapter:
         if skipped_tmall: filter_msgs.append(f"tmall={skipped_tmall}")
         filter_info = f", skipped({', '.join(filter_msgs)})" if filter_msgs else ""
 
-        print(f"[browser] collect up to {max_candidates} candidates with threshold {rating_threshold}, found={len(candidates)}{filter_info}")
+        print(f"[browser] collect up to {max_candidates} candidates, found={len(candidates)}{filter_info}")
         return candidates
 
     def _extract_detail_price(self, page: Page) -> float | None:
-        price_text = page.evaluate("""() => {
-            const selectors = """ + str(PRICE_SELECTORS) + r""";
+        price_text = page.evaluate("""(selectors) => {
             for (const sel of selectors) {
                 const el = document.querySelector(sel);
                 if (el && el.textContent.trim()) return el.textContent.trim();
             }
             return null;
-        }""")
+        }""", PRICE_SELECTORS)
         if not price_text:
             return None
         match = re.search(r'([\d,]+(?:\.\d{2})?)', price_text.replace(',', ''))
@@ -554,25 +553,23 @@ class BrowserAdapter:
 
             # Extract sales count from detail page if not found on search page
             if item.sales_count is None:
-                sales_selectors_js = "[" + ", ".join(f"'{s}'" for s in SALES_COUNT_SELECTORS) + "]"
-                sales_text = page.evaluate(f"""(selectors) => {{
+                sales_text = page.evaluate("""(selectors) => {
                     let text = '';
-                    for (const sel of selectors) {{
+                    for (const sel of selectors) {
                         const el = document.querySelector(sel);
                         if (el) text += ' ' + (el.textContent || '');
-                    }}
+                    }
                     return text || document.body.innerText;
-                }}""", [SALES_COUNT_SELECTORS])
+                }""", SALES_COUNT_SELECTORS)
                 item.sales_count = self._extract_sales_count(sales_text)
 
-            rating_selectors_js = "[" + ", ".join(f"'{s}'" for s in RATING_SELECTORS) + "]"
-            text = page.evaluate(f"""(selectors) => {{
+            text = page.evaluate("""(selectors) => {
                 const body = document.body.innerText;
                 const ratingEls = document.querySelectorAll(selectors.join(','));
                 let extra = '';
-                ratingEls.forEach(el => {{ extra += ' ' + el.textContent; }});
+                ratingEls.forEach(el => { extra += ' ' + el.textContent; });
                 return body + extra;
-            }}""", [RATING_SELECTORS])
+            }""", RATING_SELECTORS)
 
             rating = self._extract_rating(text)
             if rating is not None:
@@ -941,14 +938,12 @@ class BrowserAdapter:
 
     def _find_candidate_links(self, page: Page) -> list[dict[str, str]]:
         with suppress(Exception):
-            link_selectors_js = "[" + ", ".join(f"'{s}'" for s in PRODUCT_LINK_SELECTORS) + "]"
-            card_climb_js = "[" + ", ".join(f"'{s}'" for s in PRODUCT_CARD_CLIMB_SELECTORS) + "]"
-            results = page.evaluate(f"""(selectors, cardSelectors) => {{
+            results = page.evaluate("""(selectors, cardSelectors) => {
                 const results = [];
                 const seen = new Set();
-                for (const sel of selectors) {{
+                for (const sel of selectors) {
                     const anchors = document.querySelectorAll(sel);
-                    for (const a of anchors) {{
+                    for (const a of anchors) {
                         const href = (a.getAttribute('href') || '').trim();
                         if (!href || seen.has(href) || seen.size >= 50) continue;
                         seen.add(href);
@@ -956,23 +951,23 @@ class BrowserAdapter:
                         const title = text.split('\\n')[0].trim();
                         if (!title) continue;
                         let card = null;
-                        for (const cs of cardSelectors) {{
+                        for (const cs of cardSelectors) {
                             card = a.closest(cs);
                             if (card) break;
-                        }}
-                        if (!card) {{
+                        }
+                        if (!card) {
                             let p = a.parentElement;
-                            for (let i = 0; i < 3 && p; i++) {{ p = p.parentElement; }}
+                            for (let i = 0; i < 3 && p; i++) { p = p.parentElement; }
                             card = p || a.parentElement;
-                        }}
+                        }
                         const cardText = card ? (card.innerText || '').trim() : text;
-                        results.push({{ href, text, title, card_text: cardText }});
+                        results.push({ href, text, title, card_text: cardText });
                         if (results.length >= 50) break;
-                    }}
+                    }
                     if (results.length > 0) break;
-                }}
+                }
                 return results;
-            }}""", [PRODUCT_LINK_SELECTORS, PRODUCT_CARD_CLIMB_SELECTORS])
+            }""", [PRODUCT_LINK_SELECTORS, PRODUCT_CARD_CLIMB_SELECTORS])
             if isinstance(results, list) and results:
                 print(f"[browser] found {len(results)} candidate links via evaluate")
                 return results

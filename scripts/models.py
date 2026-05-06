@@ -8,7 +8,7 @@ from typing import Any
 class TaskContext:
     task_id: str
     feishu_message_id: str | None = None
-    search_keyword: str = "索尼耳机"
+    search_keyword: str = "Sony headphones"
     rating_threshold: float = 0.0
     max_candidates: int = 5
     need_screenshot: bool = True
@@ -74,40 +74,5 @@ class WorkflowResult:
             )
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "task_id": self.task_id,
-            "status": self.status,
-            "login_status": self.login_status,
-            "session_status": self.session_status,
-            "search_status": self.search_status,
-            "filter_status": self.filter_status,
-            "cart_status": self.cart_status,
-            "matched_items": [
-                {
-                    "title": item.title,
-                    "item_id": item.item_id,
-                    "price": item.price,
-                    "price_value": item.price_value,
-                    "sales_count": item.sales_count,
-                    "rating": item.rating,
-                    "free_shipping": item.free_shipping,
-                    "is_tmall": item.is_tmall,
-                    "url": item.url,
-                    "cart_added": item.cart_added,
-                }
-                for item in self.matched_items
-            ],
-            "evidence": self.evidence,
-            "steps": [
-                {
-                    "name": step.name,
-                    "status": step.status,
-                    "message": step.message,
-                    "artifact": step.artifact,
-                    "details": step.details,
-                }
-                for step in self.steps
-            ],
-            "error": self.error,
-        }
+    # Serialization lives in taobao.py:_result_to_output() — agent-facing JSON shape.
+    # Keeping models.py free of presentation concerns.

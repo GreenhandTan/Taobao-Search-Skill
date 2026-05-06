@@ -6,127 +6,203 @@
 [![Python](https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Playwright](https://img.shields.io/badge/playwright-1.45+-2EAD33?logo=playwright&logoColor=white)](https://playwright.dev/)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-skill-6B57FF)](https://claude.ai/code)
-[![OpenClaw](https://img.shields.io/badge/OpenClaw-compatible-FF6B35)](https://github.com/openclaw)
 
 </div>
 
-> 让 AI Agent 替你逛淘宝 —— 对AI描述你的需求，自动完成登录、搜索、按需筛选（价格/销量/好评率/包邮/天猫），精确匹配商品规格（SKU），加入购物车，并回传结构化结果。
+> AI Agent 作为**大脑**替你逛淘宝 —— 理解自然语言需求，决定搜索策略与筛选参数，调用浏览器脚本执行操作，解读结构化结果，按好评率分类汇报（达标/不达标/未知/失败）。Agent 决策，脚本执行，边界清晰。
 
-适用于 **Claude Code**、**OpenClaw**、**Cursor**、**Copilot** 等 AI Agent 工具，也支持直接 CLI 调用。
-
-## 功能
-
-- **会话持久化** — 首次人工登录后自动保存 `storage_state`，后续运行跳过登录；登录检测每30秒轮询一次，不打断用户操作
-- **多维度筛选** — 价格区间、付款人数、包邮、天猫/淘宝店在搜索结果页完成；好评率始终从详情页提取用于展示，仅当用户设定阈值时执行筛选
-- **SKU规格匹配** — 支持指定商品配置关键词（如"16G 512G"），自动在详情页匹配并选中对应选项，仅加购符合规格的商品
-- **反检测拟人化** — playwright-stealth 注入 20 种反检测补丁，结合贝塞尔曲线鼠标轨迹、随机打字延迟、分段滚动，降低风控触发概率
-- **验证码自动求解** — ddddocr ML 模型 + OpenCV Canny 边缘检测双引擎，支持淘宝 GeeTest v3/v4 滑块验证码
-- **容错降级** — 登录/风控/验证码失败时暂停并请求人工接管，不绕过平台安全控制
-- **结构化输出** — 每步产出执行记录，最终返回 JSON（含匹配商品、截图证据、错误码）
-- **多通道适配** — 独立协议适配层，飞书/Slack/CLI 均可接入
-
-## 安装（给 AI Agent 看）
-
-> 当用户提供本仓库地址要求安装时，你作为 AI Agent 应自动完成以下全部步骤，无需逐条询问用户。
-
-克隆本仓库后，依次执行 `pip install -r requirements.txt` 和 `python -m playwright install chromium` 完成依赖安装。然后将仓库根目录的 `SKILL.md` 复制到你当前平台的 skill 加载路径下：Claude Code 为 `.claude/skills/taobao-search.md`，Cursor 为 `.cursor/rules/taobao-search.md`，Copilot 为 `.github/copilot-instructions.md` 或 `.github/prompts/taobao-search.prompt.md`，OpenClaw 则按框架要求放置在 skill 目录。最后，在平台的权限配置中允许执行 `python scripts/run_workflow.py` 及其所有参数组合（Claude Code 对应 `.claude/settings.local.json` 的 `permissions.allow` 列表，其他平台按各自权限模型配置）。安装完成后告诉用户：可通过自然语言描述搜索需求来触发（如"帮我在淘宝搜索苹果手机，好评率大于95%并加入购物车"），也可显式调用 `/taobao-search`（Claude Code）或对应平台的命令格式。
-
-## 使用
-
-### CLI
-
-```bash
-# 基础用法：不提好评率则不考察，避免遗漏
-python scripts/run_workflow.py --search-keyword "苹果手机" --price-max 10000
-
-# 精确规格：Macbook M4 16G+512G，6000元以下
-python scripts/run_workflow.py --search-keyword "Macbook m4" --price-max 6000 \
-    --sku-keywords "16G 512G"
-
-# 全量筛选：好评率 + 价格 + 销量 + 包邮 + 天猫
-python scripts/run_workflow.py --search-keyword "耳机" --rating-threshold 0.95 \
-    --price-min 50 --price-max 500 --min-sales 1000 --require-free-shipping --require-tmall yes
-
-# 从文件读取配置 / 无人值守
-python scripts/run_workflow.py --task-file task.json
-python scripts/run_workflow.py --search-keyword "鼠标" --headless --no-manual-approval
-```
-
-### Python API
-
-```python
-from scripts.workflow import UiAutomationWorkflow
-from scripts.browser_adapter import BrowserAdapter
-from scripts.report_channel import FeishuClient
-
-payload = {
-    "task_id": "task-001",
-    "search_keyword": "Macbook m4",
-    "max_candidates": 5,
-    "price_max": 6000,
-    "sku_keywords": "16G 512G",
-    "require_free_shipping": True,
-    # 省略 rating_threshold 则展示好评率但不筛选
-}
-
-client = FeishuClient()
-browser = BrowserAdapter()
-workflow = UiAutomationWorkflow(client, browser)
-result = workflow.run(payload)
-
-print(f"状态: {result.status}")
-print(f"匹配商品: {len(result.matched_items)} 件")
-for item in result.matched_items:
-    tmall_tag = "[天猫]" if item.is_tmall else "[淘宝]"
-    shipping_tag = "包邮" if item.free_shipping else ""
-    sales_info = f"月销{item.sales_count}" if item.sales_count else ""
-    print(f"  {tmall_tag} {item.title} | {item.price} | {sales_info} | {shipping_tag}")
-```
+适用于 **Claude Code**、**Cursor**、**Copilot** 等 AI Agent 工具，也支持直接 CLI 调用。
 
 ## 架构
 
 ```
-SKILL.md                          # Skill 定义（AI Agent 执行指令 + 规格说明）
+┌─────────────────────────────────────────┐
+│  Agent (大脑) — 由 SKILL.md 指导         │
+│  · 理解用户意图                          │
+│  · 决定搜索策略与筛选参数                 │
+│  · 解读 JSON 结果，按好评率自行分类筛选   │
+│  · 遇到异常时决定重试/跳过/求助           │
+│  · 向用户分类汇报（达标/不达标/未知/失败）│
+└──────┬──────────────────────┬───────────┘
+       │ exec (调用)          │ 汇报/求助
+       ▼                      ▼
+┌──────────────────┐  ┌──────────────┐
+│ scripts/taobao.py│  │  用户         │
+│ · 浏览器自动化    │  │  · 手动登录   │
+│ · 反检测拟人化    │  │  · 手动过验证 │
+│ · 验证码自动求解  │  │              │
+│ · 数据提取        │  │              │
+│ · 加购操作        │  │              │
+│ · 返回 JSON 结果  │  │              │
+└──────────────────┘  └──────────────┘
+```
+
+**核心设计：** Agent 是决策者，taobao.py 是执行器。脚本提取所有商品数据（含好评率）全部返回，Agent 自行分类筛选——脚本内部不做策略决策。中断信号（`need_login`/`need_captcha`）由 Agent 处理，用户介入后 `resume` 恢复。
+
+### 决策归属审计
+
+本 Skill 严格遵循 Agent-as-Brain 架构。以下是完整决策点归属：
+
+| 决策点 | 归属 | 依据 |
+|--------|------|------|
+| 搜索关键词、价格区间、销量门槛 | **Agent** | SKILL.md §1 意图提取表 |
+| 包邮/天猫筛选 | **Agent** | 通过 CLI 参数传递 |
+| SKU 规格关键词 | **Agent** | 从用户语言中提取 |
+| 最大候选数 | **Agent** | 用户指定或默认 5 |
+| 好评率分类（达标/不达标/未知） | **Agent** | 读取 JSON `rating` 字段自行判断 |
+| 结果汇报格式与内容 | **Agent** | SKILL.md §4 汇报模板 |
+| 异常重试/跳过/求助 | **Agent** | SKILL.md §5 决策树 |
+| 登录中断 → 通知用户 → resume | **Agent** | 收到 `need_login` 后执行 |
+| 验证码中断 → 通知用户 → resume | **Agent** | 收到 `need_captcha` 后执行 |
+| 无人值守模式选择 | **Agent** | `--no-manual-approval` 标志 |
+| 浏览器启动/关闭 | taobao.py | 纯机械操作 |
+| 会话恢复/保存 | taobao.py | 文件 I/O |
+| 搜索执行、DOM 数据提取 | taobao.py | 纯执行 |
+| 加购操作、SKU 匹配 | taobao.py | 根据 Agent 传入的关键词机械匹配 |
+| 验证码自动求解尝试 | taobao.py | 纯算法，无策略选择 |
+| 登录态检测 | taobao.py | 布尔判断，不做后续决策 |
+
+> 唯一灰色地带：`--no-manual-approval` 未设置时，脚本会自行等待用户登录（最长 3.5 分钟）而非立即返回给 Agent。Agent 可通过设置该标志随时收回控制权。
+
+### 严格意义上的 Skill
+
+本 SKILL.md 不是简单的"运行这个命令"文档。它是符合 AI Agent Skill 规范的**行为指令集**：
+
+| Skill 要素 | 本项目的实现 |
+|------------|-------------|
+| **角色定义** | §0「你是决策者，taobao.py 是你的执行手脚」 |
+| **意图理解** | §1 参数提取表 + 自然语言示例 |
+| **执行协议** | §2 四步执行法（构造→执行→解读→决策） |
+| **决策框架** | §4 筛选决策 + §5 异常决策树 |
+| **中断处理** | §3 登录/验证码的多轮交互流程 |
+| **汇报模板** | §4 分类汇报格式（达标/不达标/未知/失败） |
+| **参考手册** | §6 常用操作 + §7 失败码 |
+
+对比普通脚本包装：脚本包装只告诉你 `run this command`；Skill 告诉你 `understand the user, decide parameters, interpret results, classify, report`。
+
+### AI Agent 通用性
+
+本 Skill 不依赖任何特定 Agent 框架的 API。Agent 只需要两个能力：**执行 Shell 命令** + **解析 JSON**。
+
+| 平台 | 加载方式 | 权限配置 |
+|------|----------|----------|
+| Claude Code | `.claude/skills/taobao-search.md` | `settings.local.json` → `permissions.allow` |
+| Cursor | `.cursor/rules/taobao-search.md` | Cursor Rules 配置 |
+| GitHub Copilot | `.github/copilot-instructions.md` | 无额外配置 |
+| OpenClaw | 框架 Skill 目录 | 按 OpenClaw 权限模型 |
+| 任意终端 Agent | 读取 SKILL.md → 按指令执行 | 允许 `python scripts/taobao.py` |
+
+Skill 逻辑本身零框架依赖 —— 只有标准 CLI 调用和 JSON 解析。
+
+## 功能
+
+- **AI 大脑决策** — Agent 理解自然语言意图，自动构造搜索参数；解读 JSON 结果后自行按好评率分类筛选，向用户分类汇报
+- **会话持久化** — 首次人工登录后自动保存，后续运行跳过登录；过期时 Agent 主动提示重新登录
+- **多维度筛选** — 价格/销量/包邮/天猫在搜索阶段过滤；好评率由 Agent 根据 taobao.py 返回的 rating 字段自行判断达标/不达标/未知
+- **SKU 规格匹配** — 支持指定商品配置关键词（如"16G 512G"），自动匹配并选中
+- **反检测拟人化** — playwright-stealth 注入反检测补丁，贝塞尔曲线鼠标轨迹、随机打字延迟、分段滚动
+- **验证码自动求解** — ddddocr ML 模型 + OpenCV Canny 边缘检测双引擎，支持 GeeTest v3/v4
+- **中断恢复** — 登录/风控时保存现场，Agent 通知用户介入后 resume 继续
+- **结构化 JSON 输出** — 每步执行记录、匹配/跳过商品、截图证据、错误码
+
+## 安装（给 AI Agent 看）
+
+> 当用户提供本仓库地址要求安装时，作为 AI Agent 应自动完成以下步骤。
+
+```bash
+pip install -r requirements.txt
+python -m playwright install chromium
+```
+
+然后将 `SKILL.md` 复制到平台 skill 加载路径（Claude Code → `.claude/skills/taobao-search.md`），并在权限配置中允许执行 `python scripts/taobao.py` 及其子命令。
+
+## 使用
+
+### 通过 AI Agent（推荐）
+
+用自然语言描述需求，Agent 自动执行：
+
+- "帮我在淘宝搜索苹果手机，好评率大于95%，前10个"
+- "找便宜的蓝牙耳机，100以内包邮"
+- "天猫上找索尼耳机，付款人数超1000，16G 512G规格"
+
+Agent 理解意图 → 调用 `taobao.py search` → 收到 JSON（含每个商品的好评率）→ 自行按阈值分类 → 分类汇报。
+如遇登录/验证 → Agent 提示你手动完成 → 你完成后 Agent 执行 `taobao.py resume` 继续。
+
+### CLI
+
+```bash
+# 基础搜索
+python scripts/taobao.py search --keyword "苹果手机" --price-max 10000
+
+# 精确规格 + 筛选
+python scripts/taobao.py search --keyword "Macbook m4" --price-max 6000 \
+    --sku-keywords "16G 512G"
+
+# 全量筛选
+python scripts/taobao.py search --keyword "耳机" --rating-threshold 0.95 \
+    --price-min 50 --price-max 500 --min-sales 1000 \
+    --require-free-shipping --require-tmall yes
+
+# 会话管理
+python scripts/taobao.py check-session
+python scripts/taobao.py clear-session
+
+# 无头无人值守
+python scripts/taobao.py search --keyword "鼠标" --headless --no-manual-approval
+```
+
+## 项目结构
+
+```
+SKILL.md                          # Agent 大脑指令（意图理解、执行协议、决策框架、汇报模板）
 scripts/
-├── run_workflow.py               # CLI 入口
-├── workflow.py                   # 主流程编排（7 步状态机）
-├── browser_adapter.py            # 浏览器适配器（Playwright + stealth + 拟人化）
-├── slider_solver.py              # 滑动验证码求解器（ddddocr + OpenCV）
-├── taobao_selectors.py            # 集中化DOM选择器管理
-├── session_manager.py            # 会话持久化管理
-├── session_flow.py               # 会话恢复与捕获编排
-├── report_channel.py             # 消息通道抽象层（ReportChannel基类 + FeishuClient）
+├── taobao.py                     # 统一 CLI 入口（search / resume / check-session / clear-session）
+├── browser_adapter.py            # 浏览器自动化（Playwright + stealth + 拟人化 + 数据提取）
+├── slider_solver.py              # 验证码求解器（ddddocr + OpenCV 双引擎）
+├── taobao_selectors.py            # 集中化 DOM 选择器（淘宝改版只改这一个文件）
+├── session_manager.py            # 会话文件 I/O
+├── session_flow.py               # 会话恢复/捕获编排
 ├── config.py                     # 配置解析
-└── models.py                     # 数据模型
+└── models.py                     # 数据模型（纯数据结构，不含序列化逻辑）
+tests/
+├── test_config.py                # 配置解析测试
+├── test_models.py                # 数据模型测试
+└── test_text_extraction.py       # 文本提取测试（价格/销量/好评率正则）
 .cache/taobao-search-skill/       # 会话缓存与截图（自动创建，已 gitignore）
 ```
+
+**代码质量：** 53 个单元测试覆盖配置解析、数据模型、文本提取正则。JS 字符串嵌入全部替换为 Playwright 参数传递，消除注入风险。无死代码——`to_dict()` 重复实现、`no_security_bypass` 死字段、`rating_threshold` 死参数已清理。CLI 参数定义去重为单一来源 `_define_search_args()`。
 
 ## 工作流
 
 ```
-接收任务 → 恢复会话 → 打开淘宝 → 确认登录态 → 搜索商品
-    → 多维筛选(价格/销量/包邮/天猫) → 详情页提取好评率与SKU价格校验 → 加入购物车 → 验证加购 → 回传结果
+用户描述需求 → Agent 理解意图 → 构造参数 → exec taobao.py search
+    → taobao.py: 恢复会话→登录检测→搜索→全量提取数据→加购→返回JSON(含好评率)
+    → Agent 解读 JSON → 按好评率分类(达标/不达标/未知) → 向用户汇报
+    → [如需登录/验证] Agent 通知用户 → 用户完成后 → exec taobao.py resume
 ```
 
 ## 配置参数
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `search_keyword` | str | `"索尼耳机"` | 搜索关键词 |
-| `rating_threshold` | float | `0` | 最低好评率阈值，`0`=不筛选，用户不要求时不考察 |
-| `max_candidates` | int | `5` | 最多检查的候选商品数 |
-| `price_min` | float | `None` | 最低价格过滤（元） |
-| `price_max` | float | `None` | 最高价格过滤（元） |
-| `min_sales` | int | `None` | 最低付款人数过滤 |
-| `require_free_shipping` | bool | `false` | 只要包邮商品 |
-| `require_tmall` | bool/None | `None` | `true`=只要天猫, `false`=只要淘宝店, `None`=不限 |
-| `sku_keywords` | str | `None` | SKU规格关键词（空格分隔），如 `"16G 512G"` |
-| `need_screenshot` | bool | `true` | 是否捕获证据截图 |
-| `manual_approval_required` | bool | `true` | 登录/验证时是否等待人工接管 |
-| `session_strategy` | str | `"storage_state"` | 会话恢复策略 |
-| `session_auto_save` | bool | `true` | 登录后自动保存会话 |
-| `report_channel` | str | `"feishu"` | 结果回传通道 |
-| `headless` | bool | `false` | 无头模式运行 |
+| `--keyword` | str | `Sony headphones` | 搜索关键词 |
+| `--rating-threshold` | float | `0` | 好评率阈值（Agent 用于分类汇报，脚本不筛选） |
+| `--max-candidates` | int | `5` | 最多检查的候选商品数 |
+| `--price-min` | float | — | 最低价格过滤（元） |
+| `--price-max` | float | — | 最高价格过滤（元） |
+| `--min-sales` | int | — | 最低付款人数 |
+| `--require-free-shipping` | flag | — | 只要包邮商品 |
+| `--require-tmall` | yes/no | — | 天猫/淘宝店筛选 |
+| `--sku-keywords` | str | — | SKU 关键词，空格分隔（如 `"16G 512G"`） |
+| `--no-screenshot` | flag | — | 禁用证据截图 |
+| `--no-manual-approval` | flag | — | 禁用人工接管（遇到登录/验证直接返回中断信号） |
+| `--headless` | flag | — | 无头模式运行浏览器 |
+| `--session-state-path` | str | `.cache/...` | 会话持久化文件路径 |
+| `--session-strategy` | str | `storage_state` | 会话恢复策略：`storage_state` / `cookie_localstorage` / `none` |
+| `--report-channel` | str | `feishu` | 结果回传通道 |
+| `--no-session-auto-save` | flag | — | 登录后不自动保存会话 |
 
 ## 环境要求
 

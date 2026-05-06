@@ -59,7 +59,7 @@ class TestOptionalCoercions:
 class TestConfigFromPayload:
     def test_empty_payload(self):
         config = OpenClawSkillConfig.from_payload({})
-        assert config.search_keyword == "索尼耳机"
+        assert config.search_keyword == "Sony headphones"
         assert config.rating_threshold == 0.0
         assert config.max_candidates == 5
         assert config.need_screenshot is True

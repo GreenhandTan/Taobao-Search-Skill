@@ -50,7 +50,7 @@ class OpenClawSkillConfig:
     task_file: Path | None = None
     task_id: str | None = None
     feishu_message_id: str | None = None
-    search_keyword: str = "索尼耳机"
+    search_keyword: str = "Sony headphones"
     rating_threshold: float = 0.0
     max_candidates: int = 5
     need_screenshot: bool = True
@@ -60,7 +60,6 @@ class OpenClawSkillConfig:
     session_state_path: str = ".cache/taobao-search-skill/taobao-session.json"
     session_strategy: str = "storage_state"
     session_auto_save: bool = True
-    no_security_bypass: bool = True
     price_min: float | None = None
     price_max: float | None = None
     min_sales: int | None = None
@@ -73,7 +72,7 @@ class OpenClawSkillConfig:
         return cls(
             task_id=payload.get("task_id"),
             feishu_message_id=payload.get("feishu_message_id"),
-            search_keyword=str(payload.get("search_keyword", "索尼耳机")),
+            search_keyword=str(payload.get("search_keyword", "Sony headphones")),
             rating_threshold=float(payload.get("rating_threshold", 0.0)),
             max_candidates=int(payload.get("max_candidates", 5)),
             need_screenshot=bool(payload.get("need_screenshot", True)),
@@ -83,7 +82,6 @@ class OpenClawSkillConfig:
             session_state_path=str(payload.get("session_state_path", ".cache/taobao-search-skill/taobao-session.json")),
             session_strategy=str(payload.get("session_strategy", "storage_state")),
             session_auto_save=bool(payload.get("session_auto_save", True)),
-            no_security_bypass=bool(payload.get("constraints", {}).get("no_security_bypass", True)),
             price_min=_optional_float(payload.get("price_min")),
             price_max=_optional_float(payload.get("price_max")),
             min_sales=_optional_int(payload.get("min_sales")),

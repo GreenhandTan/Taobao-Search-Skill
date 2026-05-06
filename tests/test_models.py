@@ -42,52 +42,6 @@ class TestWorkflowResult:
         result.add_step("search", "success", keyword="test", candidates=5)
         assert result.steps[0].details == {"keyword": "test", "candidates": 5}
 
-    def test_to_dict_basic(self):
-        result = WorkflowResult(task_id="task-1", status="success")
-        d = result.to_dict()
-        assert d["task_id"] == "task-1"
-        assert d["status"] == "success"
-        assert d["matched_items"] == []
-        assert d["evidence"] == []
-        assert d["steps"] == []
-
-    def test_to_dict_with_items(self):
-        result = WorkflowResult(task_id="task-1", status="success")
-        item = MatchedItem(
-            title="Test Item", item_id="123", price="¥99.00", price_value=99.0,
-            sales_count=500, rating=0.95, free_shipping=True, is_tmall=True,
-            url="https://example.com/item/123", cart_added=True,
-        )
-        result.matched_items.append(item)
-        d = result.to_dict()
-        assert len(d["matched_items"]) == 1
-        mi = d["matched_items"][0]
-        assert mi["title"] == "Test Item"
-        assert mi["item_id"] == "123"
-        assert mi["price"] == "¥99.00"
-        assert mi["price_value"] == 99.0
-        assert mi["sales_count"] == 500
-        assert mi["rating"] == 0.95
-        assert mi["free_shipping"] is True
-        assert mi["is_tmall"] is True
-        assert mi["url"] == "https://example.com/item/123"
-        assert mi["cart_added"] is True
-
-    def test_to_dict_with_error(self):
-        result = WorkflowResult(task_id="task-1", status="failed")
-        result.error = {"code": "LOGIN_REQUIRED", "message": "请登录"}
-        d = result.to_dict()
-        assert d["error"] == {"code": "LOGIN_REQUIRED", "message": "请登录"}
-
-    def test_to_dict_with_steps(self):
-        result = WorkflowResult(task_id="task-1")
-        result.add_step("a", "success", message="ok")
-        result.add_step("b", "failed", message="err", artifact="/tmp/x.png")
-        d = result.to_dict()
-        assert len(d["steps"]) == 2
-        assert d["steps"][0] == {"name": "a", "status": "success", "message": "ok", "artifact": None, "details": {}}
-        assert d["steps"][1]["artifact"] == "/tmp/x.png"
-
 
 class TestMatchedItem:
     def test_defaults(self):
