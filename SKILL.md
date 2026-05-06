@@ -1,9 +1,14 @@
 ---
 name: Taobao-Search-Skill
-description: "淘宝浏览器自动化搜索加购。Agent 作为大脑理解用户意图、决定搜索策略、解读结果、处理异常。taobao.py 是执行手脚。keywords: Taobao, search, cart, rating, price, sales, shipping, Tmall, SKU, captcha, session, browser-automation, ecommerce"
+description: "Search Taobao/Tmall, filter by rating/price/sales/shipping, match SKU specs, add to cart. 淘宝天猫浏览器自动化——按好评率/价格/销量/包邮筛选，SKU规格匹配，加入购物车。Agent as brain: understands intent, decides filters, interprets results, handles exceptions."
+version: "2.0.0"
+model: opus
+allowed-tools: [Bash]
 ---
 
 # Taobao-Search-Skill
+
+> **合规声明：** 本 Skill 仅用于自动化你自己的淘宝/天猫账号操作。不得绕过平台安全控制、不得用于批量注册/刷单/爬虫等违反淘宝服务条款的行为。使用者对自身操作承担全部责任。
 
 ## 你的角色：大脑
 
@@ -25,6 +30,27 @@ description: "淘宝浏览器自动化搜索加购。Agent 作为大脑理解用
 - taobao.py 只报告发生了什么，不决定"该怎么办"——那是你的工作
 - 每次 exec 返回的 JSON 包含 `status` 字段，你根据它决定下一步
 - 遇到 `need_login` / `need_captcha` 时，暂停并告知用户，不要自行绕过
+
+---
+
+## 前置检查：首次使用保障
+
+在收到用户搜索请求后，执行以下检查再构造命令：
+
+1. **检查会话状态**（可选但推荐）：
+   ```bash
+   python scripts/taobao.py check-session
+   ```
+   如果 `session_exists: false`，提前告知用户："首次使用需要手动登录淘宝，过程中会弹出浏览器窗口。"
+
+2. **确认依赖可用**（遇到报错时检查）：
+   - `python -m playwright install chromium` — 浏览器未安装时执行
+   - `python -m pip install -r requirements.txt` — 依赖缺失时执行
+   - Python 版本需 ≥ 3.11
+
+3. **选择人工接管模式**：
+   - **默认（交互式）**：不传 `--no-manual-approval`。脚本会自行等待用户登录（最长 3.5 分钟），你无需逐轮交互。适合用户就在电脑前、可以立即扫码的场景。
+   - **Agent 完全控制**：传 `--no-manual-approval`。遇登录/验证立即返回 `need_login`/`need_captcha` 信号，你完全掌控中断时机和用户提示语。适合你在多轮对话中需要精确控制流程的场景。
 
 ---
 
@@ -200,7 +226,7 @@ taobao.py 做了基础筛选（价格/销量/包邮/天猫/关键词匹配），
 **你需要做的判断（好评率筛选）：**
 - 读取每个 item 的 `rating` 字段
 - 如果用户设定了好评率阈值：`rating` >= 阈值 → 向用户汇报为"符合"；`rating` < 阈值 → 汇报为"好评率不达标"，但仍告知用户该商品存在
-- 如果 `rating` 为 null：说明"该商品详情页未展示好评率，无法判断"
+- **`rating: null` vs `rating: 0`：** `null` = 详情页未提取到好评率（"未知"）；`0` = 提取到但值为 0%（几乎不会出现，若出现则视为"不达标"）
 - 不加购的商品（sku/价格不匹配）在 `skipped` 中，分析 reason 向用户解释
 
 **主动建议：**
@@ -209,7 +235,7 @@ taobao.py 做了基础筛选（价格/销量/包邮/天猫/关键词匹配），
 
 ### 证据引用
 
-如果 `evidence` 数组非空，在汇报末尾附上截图路径："搜索和购物车截图已保存，可查看证据。"
+如果 `evidence` 数组非空，在汇报末尾告知用户截图已保存。注意 `evidence` 中的路径是**本地文件系统路径**（如 `C:\...\search_results.png`），不是 URL。可在汇报中列出路径供用户直接打开，但不要尝试用 Read 工具读取（它们是二进制图片文件）。
 
 ---
 
@@ -294,6 +320,22 @@ python scripts/taobao.py clear-session
   }
 }
 ```
+
+### Cursor
+
+将本文件复制到 `.cursor/rules/taobao-search.md`，在 Cursor Rules 中启用。触发方式为自然语言描述淘宝搜索意图。
+
+### GitHub Copilot
+
+将本文件内容合并到 `.github/copilot-instructions.md`，或作为独立 prompt 文件放置在 `.github/prompts/taobao-search.prompt.md`。
+
+### OpenClaw
+
+将本文件作为 Skill 定义放置在 OpenClaw 的 Skill 目录下，保持 `description` 中的关键词覆盖触发场景即可。OpenClaw 的消息路由机制会自动匹配。
+
+### 其他 AI Agent 工具
+
+任何支持 Markdown 前导 + 指令格式的 Agent 工具（Cursor Rules、Copilot Instructions 等），参考「执行协议」段即可直接使用。核心能力要求：执行 Shell 命令 + 解析 JSON。
 
 ### 直接 CLI
 

@@ -179,7 +179,7 @@ tests/
 .cache/taobao-search-skill/       # 会话缓存与截图（自动创建，已 gitignore）
 ```
 
-**代码质量：** 53 个单元测试覆盖配置解析、数据模型、文本提取正则。JS 字符串嵌入全部替换为 Playwright 参数传递，消除注入风险。无死代码——`to_dict()` 重复实现、`no_security_bypass` 死字段、`rating_threshold` 死参数已清理。CLI 参数定义去重为单一来源 `_define_search_args()`。
+**测试：** 53 个单元测试覆盖配置解析、数据模型、文本提取正则。浏览器相关逻辑因需要真实浏览器环境，通过实际运行验证。
 
 ## 工作流
 
