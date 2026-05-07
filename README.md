@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛒 淘宝自动挑货 · Taobao-Search-Skill v3
+# 🛒 淘宝自动挑货 · Taobao-Search-Skill
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
@@ -46,7 +46,7 @@ flowchart TB
     User -->|"完成操作"| Brain
 ```
 
-**核心设计变化（v2 → v3）：**
+**核心设计变化：**
 - v2：Agent 填参数 → 脚本一键跑完 → 返回 JSON → Agent 格式化汇报
 - v3：Agent 看截图 → 决定下一步 → 调用原子命令 → 再看截图 → 循环... → Agent 自主判断结果
 
