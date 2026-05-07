@@ -566,7 +566,7 @@ def _cmd_search_visual(args: argparse.Namespace) -> None:
             })
 
         state.items = items
-        state.stage = VS.RESULTS_REVIEW
+        state.stage = VisualStage.RESULTS_REVIEW
         state_mgr.save(state)
 
         # Also save workflow state for resume compatibility
