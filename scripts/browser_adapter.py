@@ -4,6 +4,7 @@ import json
 import math
 import random
 import re
+import sys
 import time
 from contextlib import suppress
 from pathlib import Path
@@ -86,7 +87,7 @@ class BrowserAdapter:
         for launch_kwargs in launch_attempts:
             try:
                 self._browser = browser_type.launch(**launch_kwargs)
-                print(f"[browser] open {self.browser_name} browser session with stealth")
+                print(f"[browser] open {self.browser_name} browser session with stealth", file=sys.stderr)
                 return
             except Exception as exc:
                 launch_errors.append(f"{launch_kwargs}: {exc}")
@@ -153,14 +154,14 @@ class BrowserAdapter:
     def restore_session(self, snapshot: SessionSnapshot) -> bool:
         self.open()
         self._create_context(storage_state=snapshot.storage_state)
-        print("[browser] restore session from persisted state")
+        print("[browser] restore session from persisted state", file=sys.stderr)
         return True
 
     def capture_session(self) -> SessionSnapshot:
         context = self._context
         if context is None:
             raise RuntimeError("Browser context is not initialized")
-        print("[browser] capture current browser session")
+        print("[browser] capture current browser session", file=sys.stderr)
         return SessionSnapshot(storage_state=context.storage_state())
 
     # ──────────────────────────────────────────────
@@ -178,9 +179,9 @@ class BrowserAdapter:
     def is_logged_in(self) -> bool:
         page = self._ensure_page()
         if self._looks_logged_in(page):
-            print("[browser] check login status => logged in")
+            print("[browser] check login status => logged in", file=sys.stderr)
             return True
-        print("[browser] check login status => not logged in")
+        print("[browser] check login status => not logged in", file=sys.stderr)
         return False
 
     def ensure_login(self, manual_approval_required: bool, force_manual: bool = False) -> str:
@@ -188,7 +189,7 @@ class BrowserAdapter:
         if not force_manual and self._looks_logged_in(page):
             return "success"
         if manual_approval_required:
-            print("[browser] waiting for human takeover or approved login flow")
+            print("[browser] waiting for human takeover or approved login flow", file=sys.stderr)
             self._wait_for_user_login(page)
             return "success" if self._looks_logged_in(page) else "waiting_manual"
         return "success"
@@ -214,10 +215,10 @@ class BrowserAdapter:
         return False
 
     def _wait_for_user_login(self, page: Page) -> None:
-        print("[browser] ============================================")
-        print("[browser] 请在弹出的浏览器窗口中手动完成淘宝登录")
-        print("[browser] 登录完成后脚本会自动检测并继续")
-        print("[browser] ============================================")
+        print("[browser] ============================================", file=sys.stderr)
+        print("[browser] 请在弹出的浏览器窗口中手动完成淘宝登录", file=sys.stderr)
+        print("[browser] 登录完成后脚本会自动检测并继续", file=sys.stderr)
+        print("[browser] ============================================", file=sys.stderr)
 
         with suppress(Exception):
             login_link = page.locator(NOT_LOGGED_IN_TEXT[0]).first
@@ -231,17 +232,17 @@ class BrowserAdapter:
 
         # Immediate first check — user might already be logged in from a popup
         if self._looks_logged_in(page):
-            print("[browser] 登录成功! (立即检测到)")
+            print("[browser] 登录成功! (立即检测到)", file=sys.stderr)
             return
 
         for i in range(max_checks):
             time.sleep(check_interval)
             total_slept += check_interval
-            print(f"[browser] 等待登录中... 第 {i+1}/{max_checks} 次检测 (已等待 {total_slept}s/{max_checks * check_interval}s)")
+            print(f"[browser] 等待登录中... 第 {i+1}/{max_checks} 次检测 (已等待 {total_slept}s/{max_checks * check_interval}s)", file=sys.stderr)
 
             # Check current page without navigating — don't interrupt user's login flow
             if self._looks_logged_in(page):
-                print(f"[browser] 登录成功! (等待约 {total_slept}s)")
+                print(f"[browser] 登录成功! (等待约 {total_slept}s)", file=sys.stderr)
                 return
 
             # If we're still on a login domain, user hasn't finished — keep waiting
@@ -254,10 +255,10 @@ class BrowserAdapter:
                 page.reload(wait_until="domcontentloaded", timeout=15000)
                 page.wait_for_timeout(1500)
             if self._looks_logged_in(page):
-                print(f"[browser] 登录成功! (等待约 {total_slept}s, 刷新后检测到)")
+                print(f"[browser] 登录成功! (等待约 {total_slept}s, 刷新后检测到)", file=sys.stderr)
                 return
 
-        print("[browser] 登录超时，请重试")
+        print("[browser] 登录超时，请重试", file=sys.stderr)
 
     # ──────────────────────────────────────────────
     # Search
@@ -268,7 +269,7 @@ class BrowserAdapter:
 
         # Step 1: Ensure we are on the taobao homepage
         if "taobao.com" not in page.url or "s.taobao.com" in page.url:
-            print("[browser] navigating to taobao homepage before search")
+            print("[browser] navigating to taobao homepage before search", file=sys.stderr)
             page.goto("https://www.taobao.com", wait_until="domcontentloaded", timeout=30000)
             self._human_wait(2, 4)
 
@@ -310,7 +311,7 @@ class BrowserAdapter:
         self._human_type(page, keyword)
         self._human_wait(0.5, 1.5)
 
-        print(f"[browser] search keyword: {keyword}")
+        print(f"[browser] search keyword: {keyword}", file=sys.stderr)
 
         if random.random() < 0.5:
             self._random_mouse_move(page)
@@ -333,7 +334,7 @@ class BrowserAdapter:
 
         # If Enter didn't navigate, try programmatic form submit
         if "s.taobao.com/search" not in page.url:
-            print("[browser] Enter key did not navigate, trying form submit")
+            print("[browser] Enter key did not navigate, trying form submit", file=sys.stderr)
             with suppress(Exception):
                 page.evaluate("""() => {
                     const form = document.querySelector('#J_TSearchForm')
@@ -349,7 +350,7 @@ class BrowserAdapter:
 
         # If form submit didn't work, try clicking search button
         if "s.taobao.com/search" not in page.url:
-            print("[browser] form submit did not navigate, trying search button")
+            print("[browser] form submit did not navigate, trying search button", file=sys.stderr)
             for btn_sel in SEARCH_SUBMIT:
                 with suppress(Exception):
                     btn = self._find_first_visible_locator(page, [btn_sel])
@@ -364,7 +365,7 @@ class BrowserAdapter:
 
         # Last resort: direct URL navigation
         if "s.taobao.com/search" not in page.url:
-            print("[browser] all interactive methods failed, using direct URL")
+            print("[browser] all interactive methods failed, using direct URL", file=sys.stderr)
             search_url = f"https://s.taobao.com/search?q={quote(keyword)}"
             page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
 
@@ -379,7 +380,7 @@ class BrowserAdapter:
         # Human-like scroll to trigger lazy loading
         self._human_scroll(page, target_y=random.randint(800, 1200))
 
-        print(f"[browser] current url: {page.url}")
+        print(f"[browser] current url: {page.url}", file=sys.stderr)
         return "success"
 
     def wait_for_results(self) -> str:
@@ -389,25 +390,25 @@ class BrowserAdapter:
         with suppress(Exception):
             page.wait_for_load_state("networkidle", timeout=10000)
         if not self._find_candidate_links(page):
-            print("[browser] results page ready but no candidates found yet")
+            print("[browser] results page ready but no candidates found yet", file=sys.stderr)
         else:
-            print("[browser] wait for results page ready")
+            print("[browser] wait for results page ready", file=sys.stderr)
         return "success"
 
     def ensure_search_access(self, manual_approval_required: bool) -> bool:
         page = self._ensure_page()
         if not self._looks_access_blocked(page):
             return True
-        print("[browser] access blocked by Taobao risk control")
+        print("[browser] access blocked by Taobao risk control", file=sys.stderr)
 
         # Try auto-solving CAPTCHA first
         if self._handle_captcha_if_present(page):
-            print("[browser] CAPTCHA auto-solved, access restored")
+            print("[browser] CAPTCHA auto-solved, access restored", file=sys.stderr)
             return True
 
         if not manual_approval_required:
             return False
-        print("[browser] waiting for user to pass manual verification")
+        print("[browser] waiting for user to pass manual verification", file=sys.stderr)
         self._wait_for_access_recovery(page)
         return not self._looks_access_blocked(page)
 
@@ -433,14 +434,14 @@ class BrowserAdapter:
             anchor_count = page.locator("a").count()
             item_count = page.locator(PRODUCT_LINK_SELECTORS[0]).count()
             tmall_count = page.locator(PRODUCT_LINK_SELECTORS[1]).count()
-            print(f"[browser] candidate diagnostics => url={page.url}, anchors={anchor_count}, item_links={item_count}, tmall_links={tmall_count}")
+            print(f"[browser] candidate diagnostics => url={page.url}, anchors={anchor_count}, item_links={item_count}, tmall_links={tmall_count}", file=sys.stderr)
             with suppress(Exception):
                 samples = page.evaluate(
                     """() => Array.from(document.querySelectorAll('a'))
                         .slice(0, 12)
                         .map((a) => ({ href: a.getAttribute('href') || '', text: (a.textContent || '').trim().slice(0, 40) }))"""
                 )
-                print(f"[browser] anchor samples => {samples}")
+                print(f"[browser] anchor samples => {samples}", file=sys.stderr)
 
         for link in links:
             if len(candidates) >= max_candidates:
@@ -499,7 +500,7 @@ class BrowserAdapter:
         if skipped_tmall: filter_msgs.append(f"tmall={skipped_tmall}")
         filter_info = f", skipped({', '.join(filter_msgs)})" if filter_msgs else ""
 
-        print(f"[browser] collect up to {max_candidates} candidates, found={len(candidates)}{filter_info}")
+        print(f"[browser] collect up to {max_candidates} candidates, found={len(candidates)}{filter_info}", file=sys.stderr)
         return candidates
 
     def _extract_detail_price(self, page: Page) -> float | None:
@@ -575,12 +576,12 @@ class BrowserAdapter:
             rating = self._extract_rating(text)
             if rating is not None:
                 item.rating = rating
-                print(f"[browser] enriched rating for [{item.title[:30]}]: {rating*100:.0f}%")
+                print(f"[browser] enriched rating for [{item.title[:30]}]: {rating*100:.0f}%", file=sys.stderr)
             else:
-                print(f"[browser] no rating found for [{item.title[:30]}]")
+                print(f"[browser] no rating found for [{item.title[:30]}]", file=sys.stderr)
             return rating
         except Exception as e:
-            print(f"[browser] enrich rating failed for [{item.title[:30]}]: {e}")
+            print(f"[browser] enrich rating failed for [{item.title[:30]}]: {e}", file=sys.stderr)
             return None
 
     def add_to_cart(self, item: MatchedItem, sku_keywords: str | None = None,
@@ -601,7 +602,7 @@ class BrowserAdapter:
 
         sku_ok = self._select_default_sku(page, sku_keywords=sku_keywords)
         if sku_ok is False:
-            print(f"[browser] SKU mismatch for [{item.title[:30]}]: no option matching '{sku_keywords}'")
+            print(f"[browser] SKU mismatch for [{item.title[:30]}]: no option matching '{sku_keywords}'", file=sys.stderr)
             return False
 
         # Verify actual SKU price against constraints
@@ -611,21 +612,21 @@ class BrowserAdapter:
                 item.price = f"¥{detail_price:.2f}"
                 item.price_value = detail_price
                 if price_min is not None and detail_price < price_min:
-                    print(f"[browser] SKU price {detail_price:.2f} < min {price_min:.2f} for [{item.title[:30]}]")
+                    print(f"[browser] SKU price {detail_price:.2f} < min {price_min:.2f} for [{item.title[:30]}]", file=sys.stderr)
                     return False
                 if price_max is not None and detail_price > price_max:
-                    print(f"[browser] SKU price {detail_price:.2f} > max {price_max:.2f} for [{item.title[:30]}]")
+                    print(f"[browser] SKU price {detail_price:.2f} > max {price_max:.2f} for [{item.title[:30]}]", file=sys.stderr)
                     return False
 
         button = self._find_first_visible_locator(page, ADD_TO_CART_BUTTONS)
         if button is None:
-            print(f"[browser] add item to cart failed: {item.title}")
+            print(f"[browser] add item to cart failed: {item.title}", file=sys.stderr)
             return False
 
         self._human_click(page, button)
         self._human_wait(1, 2.5)
         item.cart_added = True
-        print(f"[browser] add item to cart: {item.title}")
+        print(f"[browser] add item to cart: {item.title}", file=sys.stderr)
         return True
 
     def _select_default_sku(self, page: Page, sku_keywords: str | None = None) -> bool | None:
@@ -645,7 +646,7 @@ class BrowserAdapter:
         tokens = None
         if sku_keywords:
             tokens = [t.strip().upper() for t in sku_keywords.split() if t.strip()]
-            print(f"[browser] SKU keywords: {tokens}")
+            print(f"[browser] SKU keywords: {tokens}", file=sys.stderr)
 
         # Find individual value elements (not group wrappers)
         value_items = page.locator(SKU_VALUE_SELECTOR).all()
@@ -677,25 +678,25 @@ class BrowserAdapter:
                     if token in text.upper():
                         if self._is_sku_selected(el):
                             matched += 1
-                            print(f"[browser] SKU already selected '{token}' -> '{text}'")
+                            print(f"[browser] SKU already selected '{token}' -> '{text}'", file=sys.stderr)
                             break
                         with suppress(Exception):
                             self._human_click(page, el)
                             self._human_wait(0.3, 0.6)
                             matched += 1
-                            print(f"[browser] SKU matched '{token}' -> '{text}'")
+                            print(f"[browser] SKU matched '{token}' -> '{text}'", file=sys.stderr)
                             break
             if matched == 0:
-                print(f"[browser] SKU match failed: none of {tokens} found in {[t for t,_ in visible_items]}")
+                print(f"[browser] SKU match failed: none of {tokens} found in {[t for t,_ in visible_items]}", file=sys.stderr)
                 return False
-            print(f"[browser] SKU matched {matched}/{len(tokens)} keywords")
+            print(f"[browser] SKU matched {matched}/{len(tokens)} keywords", file=sys.stderr)
         else:
             el = visible_items[0][1]
             if not self._is_sku_selected(el):
                 with suppress(Exception):
                     self._human_click(page, el)
                     self._human_wait(0.3, 0.6)
-            print(f"[browser] SKU default selected: '{visible_items[0][0]}'")
+            print(f"[browser] SKU default selected: '{visible_items[0][0]}'", file=sys.stderr)
 
         return True
 
@@ -721,17 +722,17 @@ class BrowserAdapter:
                     locator = page.locator(sel).first
                     if locator.is_visible(timeout=3000):
                         count = page.locator(sel).count()
-                        print(f"[browser] confirm cart state => success ({count} items)")
+                        print(f"[browser] confirm cart state => success ({count} items)", file=sys.stderr)
                         return "success"
 
             if "cart.taobao.com" in page.url or "cart.tmall.com" in page.url:
-                print("[browser] confirm cart state => empty (on cart page but no items)")
+                print("[browser] confirm cart state => empty (on cart page but no items)", file=sys.stderr)
                 return "empty"
             else:
-                print("[browser] confirm cart state => error (did not reach cart page)")
+                print("[browser] confirm cart state => error (did not reach cart page)", file=sys.stderr)
                 return "error"
         except Exception as e:
-            print(f"[browser] confirm cart state => error: {e}")
+            print(f"[browser] confirm cart state => error: {e}", file=sys.stderr)
             return "error"
 
     def capture_evidence(self, name: str) -> str:
@@ -739,7 +740,7 @@ class BrowserAdapter:
         self.artifact_dir.mkdir(parents=True, exist_ok=True)
         path = self.artifact_dir / f"{name}.png"
         page.screenshot(path=str(path), full_page=True)
-        print(f"[browser] capture evidence: {path}")
+        print(f"[browser] capture evidence: {path}", file=sys.stderr)
         return str(path)
 
     # ──────────────────────────────────────────────
@@ -751,7 +752,7 @@ class BrowserAdapter:
         self.artifact_dir.mkdir(parents=True, exist_ok=True)
         path = self.artifact_dir / f"{name}.png"
         page.screenshot(path=str(path), full_page=False)
-        print(f"[browser] capture viewport screenshot: {path}")
+        print(f"[browser] capture viewport screenshot: {path}", file=sys.stderr)
         return str(path)
 
     def get_page_text(self, max_chars: int = 2000) -> str:
@@ -879,6 +880,29 @@ class BrowserAdapter:
                     });
                 });
 
+                // Price elements
+                const priceSelectors = [
+                    '#J_StrPr498', '.tm-price', '.tb-rmb-num',
+                    '[class*="price"]:not([class*="price-"])',
+                    '.tm-promo-price .tm-price', '.tb-item-price',
+                    '.sku-price .price-value', '.J_original_price'
+                ];
+                for (const sel of priceSelectors) {
+                    const el = document.querySelector(sel);
+                    if (el && isVisible(el)) {
+                        const rect = el.getBoundingClientRect();
+                        const text = (el.innerText || el.textContent || '').trim().slice(0, 30);
+                        if (text) {
+                            result.elements.push({
+                                role: 'price',
+                                text: text,
+                                selector: sel,
+                                box: {x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height)}
+                            });
+                        }
+                    }
+                }
+
                 return result;
             }""")
         return {"url": "", "title": "", "elements": []}
@@ -952,10 +976,58 @@ class BrowserAdapter:
     # ──────────────────────────────────────────────
 
     def select_sku(self, label_keyword: str, value_keyword: str) -> bool:
-        """Select a SKU option by group label and value text."""
+        """Select a SKU option by group label and value text.
+
+        Strategy 1: Playwright locators with scrollIntoView + human click.
+        Strategy 2: JS fallback with proper visibility check and mouse events.
+        """
         page = self._ensure_page()
+
+        # Strategy 1: Playwright locators
+        from taobao_selectors import SKU_GROUP_LABEL_SELECTORS
         with suppress(Exception):
-            return page.evaluate("""([labelKw, valueKw]) => {
+            for group_sel in SKU_GROUP_LABEL_SELECTORS:
+                group_loc = page.locator(group_sel).first
+                if not group_loc.is_visible(timeout=2000):
+                    continue
+                label_text = group_loc.inner_text()
+                if label_keyword not in label_text:
+                    continue
+                # Found matching group — look for the value option within the parent
+                parent = group_loc.locator("xpath=..")
+                value_loc = parent.locator(f"text={value_keyword}").first
+                if value_loc.is_visible(timeout=2000):
+                    # Check not disabled
+                    cls = value_loc.get_attribute("class") or ""
+                    if "disabled" not in cls and "out-of" not in cls:
+                        value_loc.scroll_into_view_if_needed()
+                        self._human_click(page, value_loc)
+                        self._human_wait(0.5, 1.0)
+                        page.wait_for_timeout(500)
+                        print(f"[browser] select_sku: Playwright click label='{label_keyword}' value='{value_keyword}'", file=sys.stderr)
+                        return True
+
+        # Strategy 2: JS fallback with proper visibility + scrollIntoView + mouse events
+        with suppress(Exception):
+            result = page.evaluate("""([labelKw, valueKw]) => {
+                const viewportH = window.innerHeight;
+                const viewportW = window.innerWidth;
+
+                function isVisible(el) {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width === 0 || rect.height === 0) return false;
+                    if (rect.bottom < 0 || rect.top > viewportH) return false;
+                    if (rect.right < 0 || rect.left > viewportW) return false;
+                    const style = window.getComputedStyle(el);
+                    if (style.visibility === 'hidden' || style.display === 'none') return false;
+                    if (parseFloat(style.opacity) === 0) return false;
+                    const cx = rect.left + rect.width / 2;
+                    const cy = rect.top + rect.height / 2;
+                    const topEl = document.elementFromPoint(cx, cy);
+                    if (topEl && topEl !== el && !el.contains(topEl)) return false;
+                    return true;
+                }
+
                 const groups = document.querySelectorAll('dl[class*="prop"], [class*="skuGroup"], .J_TSaleProp');
                 for (const g of groups) {
                     const labelEl = g.querySelector('dt, [class*="label"], [class*="title"]');
@@ -966,13 +1038,21 @@ class BrowserAdapter:
                         const text = (v.innerText || v.textContent || '').trim();
                         const cls = v.getAttribute('class') || '';
                         if (text.includes(valueKw) && !cls.includes('disabled') && !cls.includes('out-of')) {
-                            v.click();
-                            return true;
+                            if (!isVisible(v)) continue;
+                            v.scrollIntoView({behavior: "instant", block: "center"});
+                            v.dispatchEvent(new MouseEvent("mousedown", {bubbles: true, cancelable: true}));
+                            v.dispatchEvent(new MouseEvent("mouseup", {bubbles: true, cancelable: true}));
+                            v.dispatchEvent(new MouseEvent("click", {bubbles: true, cancelable: true}));
+                            return {clicked: true, label: label, value: text};
                         }
                     }
                 }
-                return false;
+                return {clicked: false};
             }""", [label_keyword, value_keyword])
+            if isinstance(result, dict) and result.get("clicked"):
+                print(f"[browser] select_sku: JS fallback click label='{result.get('label','')}' value='{result.get('value','')}'", file=sys.stderr)
+                return True
+            print(f"[browser] select_sku: no match for label='{label_keyword}' value='{value_keyword}'", file=sys.stderr)
         return False
 
     def click_element_by_text(self, text: str, role: str = "any") -> bool:
@@ -994,17 +1074,37 @@ class BrowserAdapter:
                     self._human_click(page, locator)
                     self._human_wait(0.3, 0.8)
                     return True
-        # Fallback: evaluate click by text match
+        # Fallback: evaluate click by text match with proper visibility check
         with suppress(Exception):
             clicked = page.evaluate("""(t) => {
-                const els = document.querySelectorAll('button, a, [role="button"], span, div');
+                const viewportH = window.innerHeight;
+                const viewportW = window.innerWidth;
+
+                function isVisible(el) {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width === 0 || rect.height === 0) return false;
+                    if (rect.bottom < 0 || rect.top > viewportH) return false;
+                    if (rect.right < 0 || rect.left > viewportW) return false;
+                    const style = window.getComputedStyle(el);
+                    if (style.visibility === 'hidden' || style.display === 'none') return false;
+                    if (parseFloat(style.opacity) === 0) return false;
+                    const cx = rect.left + rect.width / 2;
+                    const cy = rect.top + rect.height / 2;
+                    const topEl = document.elementFromPoint(cx, cy);
+                    if (topEl && topEl !== el && !el.contains(topEl)) return false;
+                    return true;
+                }
+
+                const interactiveSelectors = 'button, a[href], input, select, textarea, [role="button"], [role="link"], [onclick]';
+                const els = document.querySelectorAll(interactiveSelectors);
                 for (const el of els) {
                     if ((el.innerText || el.textContent || '').trim().includes(t)) {
-                        const rect = el.getBoundingClientRect();
-                        if (rect.width > 0 && rect.height > 0) {
-                            el.click();
-                            return true;
-                        }
+                        if (!isVisible(el)) continue;
+                        el.scrollIntoView({behavior: "instant", block: "center"});
+                        el.dispatchEvent(new MouseEvent("mousedown", {bubbles: true, cancelable: true}));
+                        el.dispatchEvent(new MouseEvent("mouseup", {bubbles: true, cancelable: true}));
+                        el.dispatchEvent(new MouseEvent("click", {bubbles: true, cancelable: true}));
+                        return true;
                     }
                 }
                 return false;
@@ -1014,11 +1114,23 @@ class BrowserAdapter:
                 return True
         return False
 
-    def scroll_page(self, direction: str = "down", amount: int = 500) -> None:
-        """Scroll the page. direction: 'up' or 'down'."""
+    def scroll_page(self, direction: str = "down", amount: int = 500,
+                    selector: str | None = None) -> None:
+        """Scroll the page or a specific container. direction: 'up' or 'down'."""
         page = self._ensure_page()
         sign = -1 if direction == "up" else 1
-        self._human_scroll(page, page.evaluate("window.scrollY") + sign * amount)
+        if selector:
+            with suppress(Exception):
+                page.evaluate(
+                    """(s, amt) => {
+                        const el = document.querySelector(s);
+                        if (el) { el.scrollBy(0, amt); return true; }
+                        return false;
+                    }""",
+                    [selector, sign * amount]
+                )
+        else:
+            self._human_scroll(page, page.evaluate("window.scrollY") + sign * amount)
 
     def wait_for_element(self, text: str | None = None, selector: str | None = None,
                          timeout_ms: int = 10000) -> bool:
@@ -1185,9 +1297,9 @@ class BrowserAdapter:
         for i in range(max_checks):
             time.sleep(check_interval)
             total_slept = (i + 1) * check_interval
-            print(f"[browser] 等待手动验证通过... 第 {i+1}/{max_checks} 次检测 (已等待 {total_slept}s)")
+            print(f"[browser] 等待手动验证通过... 第 {i+1}/{max_checks} 次检测 (已等待 {total_slept}s)", file=sys.stderr)
             if not self._looks_access_blocked(page):
-                print(f"[browser] 验证通过! (等待约 {total_slept}s)")
+                print(f"[browser] 验证通过! (等待约 {total_slept}s)", file=sys.stderr)
                 return
 
     def _looks_access_blocked(self, page: Page) -> bool:
@@ -1213,7 +1325,7 @@ class BrowserAdapter:
     def _handle_captcha_if_present(self, page: Page) -> bool:
         """Detect and auto-solve slider CAPTCHA if present. Returns True if solved."""
         if self._slider_solver.is_captcha_present(page):
-            print("[browser] slider CAPTCHA detected, attempting auto-solve...")
+            print("[browser] slider CAPTCHA detected, attempting auto-solve...", file=sys.stderr)
             return self._slider_solver.solve(page, max_retries=3)
         return False
 
@@ -1262,7 +1374,7 @@ class BrowserAdapter:
                 return results;
             }""", [PRODUCT_LINK_SELECTORS, PRODUCT_CARD_CLIMB_SELECTORS])
             if isinstance(results, list) and results:
-                print(f"[browser] found {len(results)} candidate links via evaluate")
+                print(f"[browser] found {len(results)} candidate links via evaluate", file=sys.stderr)
                 return results
 
         # Fallback to Playwright locators

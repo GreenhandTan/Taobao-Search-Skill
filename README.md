@@ -170,6 +170,7 @@ python scripts/taobao.py cart-view --task-id <ID>
 # 逃生舱
 python scripts/taobao.py decide --task-id <ID> --action click --value "关闭"
 python scripts/taobao.py decide --task-id <ID> --action scroll --value "down:800"
+python scripts/taobao.py decide --task-id <ID> --action scroll --value "down:300" --container ".sku-panel"
 
 # 感知辅助
 python scripts/taobao.py dom --task-id <ID>
@@ -276,7 +277,7 @@ Agent Read 截图 → 确认所有商品 → 汇报用户
 | `cart-view` | `--task-id` | `--headless` |
 | `dom` | `--task-id` | `--url`, `--headless` |
 | `wait` | `--task-id` | `--condition`, `--timeout-ms`, `--wait-seconds`, `--url` |
-| `decide` | `--task-id`, `--action` | `--value`, `--url`, `--headless` |
+| `decide` | `--task-id`, `--action` | `--value`, `--url`, `--container`, `--headless` |
 
 ### 传统模式 search 参数
 

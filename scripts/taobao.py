@@ -133,6 +133,22 @@ class VisualStateManager:
             _log("visual state deleted")
 
 
+def _is_fatal_error(exc: Exception) -> bool:
+    """Classify whether an exception is fatal enough to warrant deleting visual state.
+
+    Fatal keywords indicate the browser/connection is broken beyond recovery.
+    Non-fatal errors (e.g. selector not found, element not visible) should NOT
+    delete state — the session can continue.
+    """
+    msg = str(exc).lower()
+    fatal_keywords = [
+        "browser", "launch", "navigation", "timeout", "crash",
+        "disconnected", "context", "target closed", "session",
+        "connection", "net::err", "ssl", "certificate",
+    ]
+    return any(kw in msg for kw in fatal_keywords)
+
+
 def _visual_result_to_output(
     status: str,
     task_id: str,
@@ -329,6 +345,14 @@ def _cmd_search(args: argparse.Namespace) -> None:
         skipped_items: list[dict[str, Any]] = []
         for item in candidates:
             browser.enrich_item_rating(item)
+
+            # --- Confirmation: screenshot before add-to-cart ---
+            if context.manual_approval_required:
+                detail_screenshot = browser.capture_viewport_screenshot(
+                    f"pre_cart_{context.task_id}_{len(result.matched_items)}"
+                )
+                result.evidence.append(detail_screenshot)
+                _log(f"Pre-cart screenshot saved: {detail_screenshot}")
 
             cart_ok = browser.add_to_cart(
                 item, sku_keywords=context.sku_keywords,
@@ -565,7 +589,8 @@ def _cmd_search_visual(args: argparse.Namespace) -> None:
         ))
 
     except Exception as exc:
-        state_mgr.delete()
+        if _is_fatal_error(exc):
+            state_mgr.delete()
         _output_json(_visual_result_to_output(
             "failed", context.task_id, "idle",
             error={"code": "WORKFLOW_ERROR", "message": str(exc)},
@@ -588,6 +613,7 @@ def _cmd_open(args: argparse.Namespace) -> None:
         _output_json(_visual_result_to_output(
             "failed", args.task_id, "idle",
             error={"code": "NO_VISUAL_STATE", "message": "没有视觉任务状态，请先运行 search --visual"},
+            hints={"suggestion": "Run 'search --visual --keyword <keyword>' to start a new visual session"},
         ))
         return
 
@@ -667,6 +693,8 @@ def _cmd_open(args: argparse.Namespace) -> None:
         ))
 
     except Exception as exc:
+        if _is_fatal_error(exc):
+            state_mgr.delete()
         _output_json(_visual_result_to_output(
             "failed", state.task_id, state.stage.value if state else "idle",
             error={"code": "WORKFLOW_ERROR", "message": str(exc)},
@@ -689,6 +717,7 @@ def _cmd_sku_select(args: argparse.Namespace) -> None:
         _output_json(_visual_result_to_output(
             "failed", args.task_id, "idle",
             error={"code": "NO_VISUAL_STATE", "message": "没有视觉任务状态"},
+            hints={"suggestion": "Run 'search --visual --keyword <keyword>' then 'open --task-id <id> --index N' to inspect items before selecting SKUs"},
         ))
         return
 
@@ -756,6 +785,8 @@ def _cmd_sku_select(args: argparse.Namespace) -> None:
         ))
 
     except Exception as exc:
+        if _is_fatal_error(exc):
+            state_mgr.delete()
         _output_json(_visual_result_to_output(
             "failed", state.task_id, state.stage.value if state else "idle",
             error={"code": "WORKFLOW_ERROR", "message": str(exc)},
@@ -779,6 +810,7 @@ def _cmd_cart_add(args: argparse.Namespace) -> None:
         _output_json(_visual_result_to_output(
             "failed", args.task_id, "idle",
             error={"code": "NO_VISUAL_STATE", "message": "没有视觉任务状态"},
+            hints={"suggestion": "Run 'search --visual' then 'open' then 'sku-select' before adding to cart"},
         ))
         return
 
@@ -817,8 +849,15 @@ def _cmd_cart_add(args: argparse.Namespace) -> None:
         browser._human_click(page, button)
         browser._human_wait(1.5, 3)
 
-        # Check for success popup
-        confirmed = browser._find_first_visible_locator(page, CART_CONFIRM_POPUP)
+        confirmed = None
+        for retry in range(5):
+            confirmed = browser._find_first_visible_locator(page, CART_CONFIRM_POPUP)
+            if confirmed:
+                break
+            browser._human_wait(0.5, 1.0)
+            if retry == 2:
+                browser._human_click(page, button)
+                browser._human_wait(1, 1.5)
 
         screenshot = browser.capture_viewport_screenshot(
             f"cart_add_{state.current_item_index}_{state.task_id}"
@@ -838,6 +877,8 @@ def _cmd_cart_add(args: argparse.Namespace) -> None:
             hints={
                 "step": "add_to_cart",
                 "confirmation_seen": confirmed is not None,
+                "manual_approval_required": True,
+                "artifact_path": screenshot,
                 "item_index": state.current_item_index,
                 "next": "Read screenshot to confirm. Then: 'cart-view --task-id {}' to review, or 'open --task-id {} --index N' for next item.".format(state.task_id, state.task_id),
             },
@@ -845,6 +886,8 @@ def _cmd_cart_add(args: argparse.Namespace) -> None:
         ))
 
     except Exception as exc:
+        if _is_fatal_error(exc):
+            state_mgr.delete()
         _output_json(_visual_result_to_output(
             "failed", state.task_id, state.stage.value if state else "idle",
             error={"code": "WORKFLOW_ERROR", "message": str(exc)},
@@ -868,6 +911,7 @@ def _cmd_cart_view(args: argparse.Namespace) -> None:
         _output_json(_visual_result_to_output(
             "failed", args.task_id, "idle",
             error={"code": "NO_VISUAL_STATE", "message": "没有视觉任务状态"},
+            hints={"suggestion": "Run 'search --visual' then add items to cart before viewing"},
         ))
         return
 
@@ -925,6 +969,8 @@ def _cmd_cart_view(args: argparse.Namespace) -> None:
         ))
 
     except Exception as exc:
+        if _is_fatal_error(exc):
+            state_mgr.delete()
         _output_json(_visual_result_to_output(
             "failed", state.task_id, state.stage.value if state else "idle",
             error={"code": "WORKFLOW_ERROR", "message": str(exc)},
@@ -984,6 +1030,8 @@ def _cmd_dom(args: argparse.Namespace) -> None:
         ))
 
     except Exception as exc:
+        if _is_fatal_error(exc):
+            state_mgr.delete()
         _output_json(_visual_result_to_output(
             "failed", args.task_id, "idle",
             error={"code": "WORKFLOW_ERROR", "message": str(exc)},
@@ -1045,6 +1093,8 @@ def _cmd_wait(args: argparse.Namespace) -> None:
         ))
 
     except Exception as exc:
+        if _is_fatal_error(exc):
+            state_mgr.delete()
         _output_json(_visual_result_to_output(
             "failed", args.task_id, "idle",
             error={"code": "WORKFLOW_ERROR", "message": str(exc)},
@@ -1095,12 +1145,21 @@ def _cmd_decide(args: argparse.Namespace) -> None:
             result_status = "success" if clicked else "error"
             result_data["clicked"] = clicked
         elif action == "scroll":
-            parts = value.split(":") if value else ["down", "500"]
+            # Parse format: "down:500" or "down:300||.sku-panel" (container selector)
+            # --container arg takes precedence over inline || syntax
+            container_selector = args.container if getattr(args, "container", None) else None
+            scroll_value = value
+            if not container_selector and "||" in scroll_value:
+                scroll_part, container_selector = scroll_value.split("||", 1)
+                scroll_value = scroll_part
+            parts = scroll_value.split(":") if scroll_value else ["down", "500"]
             direction = parts[0] if len(parts) > 0 else "down"
             amount = int(parts[1]) if len(parts) > 1 else 500
-            browser.scroll_page(direction, amount)
+            browser.scroll_page(direction, amount, selector=container_selector)
             result_data["direction"] = direction
             result_data["amount"] = amount
+            if container_selector:
+                result_data["container"] = container_selector
         elif action == "hover":
             # Hover over element containing text
             if value:
@@ -1153,6 +1212,8 @@ def _cmd_decide(args: argparse.Namespace) -> None:
         ))
 
     except Exception as exc:
+        if _is_fatal_error(exc):
+            state_mgr.delete()
         _output_json(_visual_result_to_output(
             "failed", args.task_id, "idle",
             error={"code": "WORKFLOW_ERROR", "message": str(exc)},
@@ -1427,6 +1488,7 @@ def _build_parser() -> argparse.ArgumentParser:
                                choices=["click", "scroll", "hover", "press", "type", "navigate", "screenshot"])
     decide_parser.add_argument("--value", help="Action parameter (text to click, 'down:500' for scroll, key name, etc.)")
     decide_parser.add_argument("--url", help="URL for navigate action")
+    decide_parser.add_argument("--container", help="CSS selector for scrollable container (scroll action)")
     _add_visual_common_args(decide_parser)
 
     return parser

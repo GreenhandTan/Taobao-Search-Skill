@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import sys
 import time
 from contextlib import suppress
 from typing import Any
@@ -59,12 +60,12 @@ class SliderSolver:
         Returns True if solved successfully, False if all retries failed.
         """
         for attempt in range(max_retries):
-            print(f"[slider] Attempt {attempt + 1}/{max_retries}")
+            print(f"[slider] Attempt {attempt + 1}/{max_retries}", file=sys.stderr)
 
             # Find CAPTCHA elements
             bg_el, slice_el, slider_btn = self._find_captcha_elements(page)
             if slider_btn is None:
-                print("[slider] No slider button found")
+                print("[slider] No slider button found", file=sys.stderr)
                 return False
 
             # Screenshot the background and slider piece
@@ -72,13 +73,13 @@ class SliderSolver:
             slice_bytes = self._screenshot_element(page, slice_el) if slice_el else None
 
             if bg_bytes is None:
-                print("[slider] Failed to screenshot background")
+                print("[slider] Failed to screenshot background", file=sys.stderr)
                 continue
 
             # Detect gap position
             gap_x = self._detect_gap(bg_bytes, slice_bytes)
             if gap_x is None or gap_x <= 0:
-                print("[slider] Gap detection failed, retrying...")
+                print("[slider] Gap detection failed, retrying...", file=sys.stderr)
                 self._refresh_captcha(page)
                 time.sleep(1)
                 continue
@@ -95,7 +96,7 @@ class SliderSolver:
             else:
                 drag_distance = gap_x
 
-            print(f"[slider] Gap at x={gap_x}, drag distance={drag_distance}px")
+            print(f"[slider] Gap at x={gap_x}, drag distance={drag_distance}px", file=sys.stderr)
 
             # Perform human-like drag
             self._human_drag(page, slider_btn, drag_distance)
@@ -104,14 +105,14 @@ class SliderSolver:
             time.sleep(2)
 
             if self._check_solved(page):
-                print("[slider] CAPTCHA solved successfully!")
+                print("[slider] CAPTCHA solved successfully!", file=sys.stderr)
                 return True
             else:
-                print("[slider] Solve failed, retrying...")
+                print("[slider] Solve failed, retrying...", file=sys.stderr)
                 self._refresh_captcha(page)
                 time.sleep(1)
 
-        print("[slider] All retries exhausted")
+        print("[slider] All retries exhausted", file=sys.stderr)
         return False
 
     # ──────────────────────────────────────────────
@@ -129,7 +130,7 @@ class SliderSolver:
                 loc = page.locator(sel).first
                 if loc.is_visible(timeout=1500):
                     bg_el = loc
-                    print(f"[slider] found bg: {sel}")
+                    print(f"[slider] found bg: {sel}", file=sys.stderr)
                     break
 
         for sel in CAPTCHA_SLICE_SELECTORS:
@@ -137,7 +138,7 @@ class SliderSolver:
                 loc = page.locator(sel).first
                 if loc.is_visible(timeout=1500):
                     slice_el = loc
-                    print(f"[slider] found slice: {sel}")
+                    print(f"[slider] found slice: {sel}", file=sys.stderr)
                     break
 
         for sel in CAPTCHA_SLIDER_BTN_SELECTORS:
@@ -145,7 +146,7 @@ class SliderSolver:
                 loc = page.locator(sel).first
                 if loc.is_visible(timeout=1500):
                     slider_btn = loc
-                    print(f"[slider] found slider btn: {sel}")
+                    print(f"[slider] found slider btn: {sel}", file=sys.stderr)
                     break
 
         # Last resort: try to find any canvas element (GeeTest uses canvas)
@@ -156,7 +157,7 @@ class SliderSolver:
                     with suppress(Exception):
                         if c.is_visible(timeout=500):
                             bg_el = c
-                            print("[slider] found bg via canvas fallback")
+                            print("[slider] found bg via canvas fallback", file=sys.stderr)
                             break
 
         return bg_el, slice_el, slider_btn
@@ -186,7 +187,7 @@ class SliderSolver:
                 result = self._det.slide_match(slice_bytes, bg_bytes, simple_target=True)
                 if result and "target" in result:
                     x = result["target"][0]
-                    print(f"[slider/ddddocr] Gap at x={x}")
+                    print(f"[slider/ddddocr] Gap at x={x}", file=sys.stderr)
                     return x
 
             # Fallback: use ddddocr's detection without slice
@@ -194,7 +195,7 @@ class SliderSolver:
             if result and "target" in result:
                 return result["target"][0]
         except Exception as e:
-            print(f"[slider/ddddocr] Error: {e}")
+            print(f"[slider/ddddocr] Error: {e}", file=sys.stderr)
         return None
 
     def _detect_gap_opencv(self, bg_bytes: bytes, slice_bytes: bytes | None = None) -> int | None:
@@ -221,7 +222,7 @@ class SliderSolver:
 
                     result = cv2.matchTemplate(bg_edge, slider_edge, cv2.TM_CCOEFF_NORMED)
                     _, max_val, _, max_loc = cv2.minMaxLoc(result)
-                    print(f"[slider/opencv] Gap at x={max_loc[0]}, confidence={max_val:.4f}")
+                    print(f"[slider/opencv] Gap at x={max_loc[0]}, confidence={max_val:.4f}", file=sys.stderr)
                     return max_loc[0]
 
             # Without slice: detect the gap by finding the darkest vertical column
@@ -235,11 +236,11 @@ class SliderSolver:
             max_x = int(bg.shape[1] * 0.9)
             search_region = col_sums[min_x:max_x]
             gap_x = int(np.argmax(search_region)) + min_x
-            print(f"[slider/opencv] Estimated gap at x={gap_x}")
+            print(f"[slider/opencv] Estimated gap at x={gap_x}", file=sys.stderr)
             return gap_x
 
         except Exception as e:
-            print(f"[slider/opencv] Error: {e}")
+            print(f"[slider/opencv] Error: {e}", file=sys.stderr)
             return None
 
     # ──────────────────────────────────────────────
@@ -370,5 +371,5 @@ class SliderSolver:
                 btn = page.locator(sel).first
                 if btn.is_visible(timeout=1000):
                     btn.click()
-                    print("[slider] Refreshed CAPTCHA")
+                    print("[slider] Refreshed CAPTCHA", file=sys.stderr)
                     return
