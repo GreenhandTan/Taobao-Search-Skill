@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛒 淘宝自动挑货 · Taobao-Search-Skill
+# 🛒 淘宝自动挑货 · Taobao-Search-Skill v3
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
@@ -9,110 +9,103 @@
 
 </div>
 
-> AI Agent 作为**大脑**替你逛淘宝 —— 理解自然语言需求，决定搜索策略与筛选参数，调用浏览器脚本执行操作，解读结构化结果，按好评率分类汇报（达标/不达标/未知/失败）。Agent 决策，脚本执行，边界清晰。
+> **AI Agent 作为视觉大脑替你逛淘宝** —— 实时看截图、读 DOM、做决策。不再填参数等结果，而是逐步操控浏览器：搜→看图→选商品→看图→选 SKU→看图→加购。每次操作后看截图决定下一步，完整自主推理链。
 
-适用于 **Claude Code**、**Cursor**、**Copilot** 等 AI Agent 工具，也支持直接 CLI 调用。
+适用于 **Claude Code**、**Cursor**、**Copilot** 等 AI Agent 工具，也支持直接 CLI 调用。默认假设用户的模型支持多模态（视觉）。
 
 ## 架构
 
 ```mermaid
 flowchart TB
-    subgraph Brain["Agent (大脑) — SKILL.md 指导"]
+    subgraph Brain["AI Agent (大脑+眼睛) — SKILL.md v3 指导"]
         direction TB
-        B1["理解用户意图"]
-        B2["决定搜索策略与筛选参数"]
-        B3["解读 JSON 结果，按好评率分类筛选"]
-        B4["异常时决定重试 / 跳过 / 求助"]
-        B5["向用户分类汇报<br/>（达标 / 不达标 / 未知 / 失败）"]
+        B1["理解用户意图 → 拆解任务"]
+        B2["Read 截图 → 视觉分析页面"]
+        B3["Read DOM → 确认可操作元素"]
+        B4["决策：选哪个商品 / 选哪个SKU / 是否加购"]
+        B5["风险识别：官换/翻新/低价异常"]
+        B6["异常恢复：弹窗/验证码/加载失败"]
+        B7["向用户分类汇报"]
     end
 
-    subgraph Hands["scripts/taobao.py (执行手脚)"]
+    subgraph Hands["scripts/taobao.py (执行手)"]
         direction TB
-        H1["浏览器自动化"]
-        H2["反检测拟人化"]
-        H3["验证码自动求解"]
-        H4["数据提取"]
-        H5["加购操作"]
-        H6["返回 JSON 结果"]
+        H1["原子操作：search/open/sku-select/cart-add/cart-view"]
+        H2["感知输出：截图 + 可见DOM + 页面文本"]
+        H3["反检测拟人化 + 验证码自动求解"]
+        H4["逃生舱：decide(click/scroll/hover/press/type/navigate)"]
+        H5["会话持久化 + 中断恢复"]
+        H6["返回 JSON(screenshot + DOM + data)"]
     end
 
     User["用户<br/>· 手动登录<br/>· 手动过验证码"]
 
-    Brain -->|"exec 调用"| Hands
-    Hands -->|"返回 JSON"| Brain
+    Brain -->|"执行原子命令"| Hands
+    Hands -->|"截图 + DOM + JSON"| Brain
     Brain -->|"汇报 / 求助"| User
     User -->|"完成操作"| Brain
 ```
 
-**核心设计：** Agent 是决策者，taobao.py 是执行器。脚本提取所有商品数据（含好评率）全部返回，Agent 自行分类筛选——脚本内部不做策略决策。中断信号（`need_login`/`need_captcha`）由 Agent 处理，用户介入后 `resume` 恢复。
+**核心设计变化（v2 → v3）：**
+- v2：Agent 填参数 → 脚本一键跑完 → 返回 JSON → Agent 格式化汇报
+- v3：Agent 看截图 → 决定下一步 → 调用原子命令 → 再看截图 → 循环... → Agent 自主判断结果
 
-### 决策归属审计
+脚本降级为纯"手"——只执行具体操作（打开浏览器、点击、输入、截图），不做任何判断。Agent 做所有决策：选哪个商品、选哪个 SKU、价格是否在预算内、是否跳过风险商品。
 
-本 Skill 严格遵循 Agent-as-Brain 架构。以下是完整决策点归属：
+### 双重感知：截图 + DOM
+
+| 感知通道 | 来源 | 用途 |
+|---------|------|------|
+| **视觉** | `screenshot` PNG 文件（Read 工具查看） | 理解页面布局、识别弹窗、确认选中状态、发现风险关键词 |
+| **DOM** | `dom` 子命令返回的语义标注结构 | 精确获取可选 SKU、按钮状态、元素坐标、禁用/选中标记 |
+
+截图告诉你"页面长什么样"，DOM 告诉你"可以操作什么"。两者互补，缺一不可。
+
+### 原子操作命令集
+
+| 命令 | 作用 | 触发时机 |
+|------|------|---------|
+| `search --visual` | 搜索 + 截图搜索结果 | 开始新任务 |
+| `open --index N` | 打开商品详情页截图 | 看中某个搜索结果 |
+| `sku-select --label "颜色" --value "黑色"` | 选一个 SKU 选项 | 详情页看到 SKU 区 |
+| `cart-add` | 加入购物车 | SKU 选好、价格确认 |
+| `cart-view` | 查看购物车截图 | 全部加购后确认 |
+| `dom` | 提取可见 DOM | 截图看不清或需精确数据 |
+| `wait` | 等待条件满足 | 页面加载慢 |
+| `decide --action click\|scroll\|hover\|press\|type\|navigate` | 通用逃生舱 | 弹窗、非标准操作 |
+
+状态通过 `--task-id` 在命令间传递，每次命令独立打开/恢复会话/执行/截图/关闭。
+
+### 决策归属审计（v3）
 
 | 决策点 | 归属 | 依据 |
 |--------|------|------|
-| 搜索关键词、价格区间、销量门槛 | **Agent** | SKILL.md §1 意图提取表 |
-| 包邮/天猫筛选 | **Agent** | 通过 CLI 参数传递 |
-| SKU 规格关键词 | **Agent** | 从用户语言中提取 |
-| 最大候选数 | **Agent** | 用户指定或默认 5 |
-| 好评率分类（达标/不达标/未知） | **Agent** | 读取 JSON `rating` 字段自行判断 |
-| 结果汇报格式与内容 | **Agent** | SKILL.md §4 汇报模板 |
-| 异常重试/跳过/求助 | **Agent** | SKILL.md §5 决策树 |
-| 登录中断 → 通知用户 → resume | **Agent** | 收到 `need_login` 后执行 |
-| 验证码中断 → 通知用户 → resume | **Agent** | 收到 `need_captcha` 后执行 |
-| 无人值守模式选择 | **Agent** | `--no-manual-approval` 标志 |
+| 看到搜索结果，选哪个商品打开 | **Agent** | 视觉分析 + 价格/销量判断 |
+| 商品详情页选哪个 SKU | **Agent** | 看截图确认选项 + DOM 确认可选性 |
+| 判断价格是否在预算内 | **Agent** | 视觉确认 + data 中的 price_value |
+| 是否跳过风险商品（官换/翻新） | **Agent** | 看截图中的标题和描述文字 |
+| 弹窗处理（关掉/等待/忽略） | **Agent** | 看截图判断弹窗类型 |
+| 搜索关键词、筛选条件 | **Agent** | 从用户需求提取 |
 | 浏览器启动/关闭 | taobao.py | 纯机械操作 |
 | 会话恢复/保存 | taobao.py | 文件 I/O |
-| 搜索执行、DOM 数据提取 | taobao.py | 纯执行 |
-| 加购操作、SKU 匹配 | taobao.py | 根据 Agent 传入的关键词机械匹配 |
-| 验证码自动求解尝试 | taobao.py | 纯算法，无策略选择 |
-| 登录态检测 | taobao.py | 布尔判断，不做后续决策 |
-
-> 唯一灰色地带：`--no-manual-approval` 未设置时，脚本会自行等待用户登录（最长 3.5 分钟）而非立即返回给 Agent。Agent 可通过设置该标志随时收回控制权。
-
-### 严格意义上的 Skill
-
-本 SKILL.md 不是简单的"运行这个命令"文档。它是符合 AI Agent Skill 规范的**行为指令集**：
-
-| Skill 要素 | 本项目的实现 |
-|------------|-------------|
-| **合规声明** | 仅用于自有账号，禁止滥用 |
-| **角色定义** | §0「你是决策者，taobao.py 是你的执行手脚」 |
-| **前置检查** | 会话状态、依赖可用性、人工接管模式选择 |
-| **意图理解** | §1 13 参数提取表 + 规则 + 默认值 + 示例 |
-| **执行协议** | §2 三步执行法（构造→执行→解读→按 status 决策） |
-| **中断处理** | §3 登录/验证码多轮交互 + 重试上限 + clear-session 兜底 |
-| **决策框架** | §4 好评率分类 + 筛选判断 + 主动建议 + §5 异常决策树 |
-| **汇报模板** | §4 达标/不达标/未知/失败四类格式 |
-| **参考手册** | §6 常用操作 + 失败码表 + 依赖 + 多平台部署 |
-
-对比普通脚本包装：脚本包装只告诉你 `run this command`；Skill 告诉你 `understand the user, decide parameters, interpret results, classify, report`。
-
-### AI Agent 通用性
-
-本 Skill 不依赖任何特定 Agent 框架的 API。Agent 只需要两个能力：**执行 Shell 命令** + **解析 JSON**。
-
-| 平台 | 加载方式 | 权限配置 |
-|------|----------|----------|
-| Claude Code | `.claude/skills/taobao-search.md` | `settings.local.json` → `permissions.allow` |
-| Cursor | `.cursor/rules/taobao-search.md` | Cursor Rules 配置 |
-| GitHub Copilot | `.github/copilot-instructions.md` | 无额外配置 |
-| OpenClaw | 框架 Skill 目录 | 按 OpenClaw 权限模型 |
-| 任意终端 Agent | 读取 SKILL.md → 按指令执行 | 允许 `python scripts/taobao.py` |
-
-Skill 逻辑本身零框架依赖 —— 只有标准 CLI 调用和 JSON 解析。
+| 反检测拟人化 | taobao.py | 纯算法 |
+| 验证码自动求解 | taobao.py | 纯算法 |
+| 截图、DOM 提取 | taobao.py | 纯执行 |
+| 元素点击、文字输入 | taobao.py | Agent 指定目标，脚本执行 |
 
 ## 功能
 
-- **AI 大脑决策** — Agent 理解自然语言意图，自动构造搜索参数；解读 JSON 结果后自行按好评率分类筛选，向用户分类汇报
-- **会话持久化** — 首次人工登录后自动保存，后续运行跳过登录；过期时 Agent 主动提示重新登录
-- **多维度筛选** — 价格/销量/包邮/天猫在搜索阶段过滤；好评率由 Agent 根据 taobao.py 返回的 rating 字段自行判断达标/不达标/未知
-- **SKU 规格匹配** — 支持指定商品配置关键词（如"16G 512G"），自动匹配并选中
+- **视觉大脑决策** — Agent 看截图分析页面，自主决定每一步操作，非填参数等结果
+- **双重感知** — 截图（视觉） + DOM 语义标注（结构化），互补确认
+- **原子操作** — 8 个独立子命令，AI 自由组合调用顺序，无固定流程
+- **SKU 多级选择** — 逐个选芯片→内存→硬盘，每步截图确认，适应淘宝动态依赖
+- **风险识别** — AI 主动识别标题中的"官换""翻新""后封""二手"等风险词
+- **逃生舱** — `decide` 命令支持 click/scroll/hover/press/type/navigate，处理意外弹窗、非标准布局
+- **会话持久化** — 首次人工登录后自动保存，后续运行跳过登录
 - **反检测拟人化** — playwright-stealth 注入反检测补丁，贝塞尔曲线鼠标轨迹、随机打字延迟、分段滚动
 - **验证码自动求解** — ddddocr ML 模型 + OpenCV Canny 边缘检测双引擎，支持 GeeTest v3/v4
-- **中断恢复** — 登录/风控时保存现场，Agent 通知用户介入后 resume 继续
-- **结构化 JSON 输出** — 每步执行记录、匹配/跳过商品、截图证据、错误码
+- **中断恢复** — 登录/风控时返回 `need_login`/`need_captcha`，Agent 通知用户介入后重试
+- **向后兼容** — 保留传统模式 `search`（不带 `--visual`），一键流水线仍可用
 
 ## 安装（给 AI Agent 看）
 
@@ -125,93 +118,183 @@ python -m playwright install chromium
 
 然后将 `SKILL.md` 复制到平台 skill 加载路径（Claude Code → `.claude/skills/taobao-search.md`），并在权限配置中允许执行 `python scripts/taobao.py` 及其子命令。
 
+```json
+{
+  "permissions": {
+    "allow": [
+      "python scripts/taobao.py search *",
+      "python scripts/taobao.py open *",
+      "python scripts/taobao.py sku-select *",
+      "python scripts/taobao.py cart-add *",
+      "python scripts/taobao.py cart-view *",
+      "python scripts/taobao.py dom *",
+      "python scripts/taobao.py wait *",
+      "python scripts/taobao.py decide *",
+      "python scripts/taobao.py resume",
+      "python scripts/taobao.py check-session",
+      "python scripts/taobao.py clear-session"
+    ]
+  }
+}
+```
+
 ## 使用
 
-### 通过 AI Agent（推荐）
+### 通过 AI Agent（推荐·视觉模式）
 
-用自然语言描述需求，Agent 自动执行：
+用自然语言描述需求，Agent 逐步操控浏览器：
 
-- "帮我在淘宝搜索苹果手机，好评率大于95%，前10个"
+- "帮我在淘宝上挑选6000元以下的MacBook Air M4芯片版本，16+512，13寸或者15寸屏幕都可以"
 - "找便宜的蓝牙耳机，100以内包邮"
-- "天猫上找索尼耳机，付款人数超1000，16G 512G规格"
+- "天猫上找索尼耳机，付款人数超1000"
 
-Agent 理解意图 → 调用 `taobao.py search` → 收到 JSON（含每个商品的好评率）→ 自行按阈值分类 → 分类汇报。
-如遇登录/验证 → Agent 提示你手动完成 → 你完成后 Agent 执行 `taobao.py resume` 继续。
+Agent 自动完成：搜索 → 看截图选商品 → 打开详情页 → 看截图选 SKU → 看截图确认价格 → 加购 → 汇报。遇到弹窗/异常会自行处理，遇到风险商品会主动警告。
+
+### 通过 AI Agent（传统模式·快速）
+
+简单明确需求可用传统模式，速度快但灵活性低：
+
+- "帮我在淘宝搜索苹果手机，好评率大于95%，前 10 个"
+- "找便宜的蓝牙耳机，100 以内包邮"
 
 ### CLI
 
 ```bash
-# 基础搜索
-python scripts/taobao.py search --keyword "苹果手机" --price-max 10000
+# 视觉模式（推荐）
+python scripts/taobao.py search --keyword "MacBook Air M4" --visual --max-candidates 10
+python scripts/taobao.py open --task-id <ID> --index 2
+python scripts/taobao.py sku-select --task-id <ID> --label "存储" --value "512G"
+python scripts/taobao.py cart-add --task-id <ID>
+python scripts/taobao.py cart-view --task-id <ID>
 
-# 精确规格 + 筛选
-python scripts/taobao.py search --keyword "Macbook m4" --price-max 6000 \
-    --sku-keywords "16G 512G"
+# 逃生舱
+python scripts/taobao.py decide --task-id <ID> --action click --value "关闭"
+python scripts/taobao.py decide --task-id <ID> --action scroll --value "down:800"
 
-# 全量筛选
-python scripts/taobao.py search --keyword "耳机" --rating-threshold 0.95 \
-    --price-min 50 --price-max 500 --min-sales 1000 \
-    --require-free-shipping --require-tmall yes
+# 感知辅助
+python scripts/taobao.py dom --task-id <ID>
+python scripts/taobao.py wait --task-id <ID> --condition "selector:.sku-item"
+
+# 传统模式（快速，不交互）
+python scripts/taobao.py search --keyword "耳机" --price-max 500 --require-free-shipping
+python scripts/taobao.py search --keyword "Macbook m4" --price-max 6000 --sku-keywords "16G 512G"
 
 # 会话管理
 python scripts/taobao.py check-session
 python scripts/taobao.py clear-session
-
-# 无头无人值守
-python scripts/taobao.py search --keyword "鼠标" --headless --no-manual-approval
 ```
 
 ## 项目结构
 
 ```
-SKILL.md                          # Agent 行为指令集（合规声明 + 角色定义 + 前置检查 + 意图理解 + 执行协议 + 中断处理 + 决策框架 + 汇报模板 + 多平台部署）
+SKILL.md                          # Agent 行为指令集 v3（四层架构：感知/行动/决策/SKU策略 + 完整示例）
 scripts/
-├── taobao.py                     # 统一 CLI 入口（search / resume / check-session / clear-session）
-├── browser_adapter.py            # 浏览器自动化（Playwright + stealth + 拟人化 + 数据提取）
+├── taobao.py                     # CLI 入口（11 个子命令：search/open/sku-select/cart-add/cart-view/dom/wait/decide/resume/check-session/clear-session）
+├── browser_adapter.py            # 浏览器自动化（原子操作 + 感知输出 + 反检测拟人化）
+├── taobao_selectors.py            # 集中化 DOM 选择器（传统模式 + 视觉模式）
 ├── slider_solver.py              # 验证码求解器（ddddocr + OpenCV 双引擎）
-├── taobao_selectors.py            # 集中化 DOM 选择器（淘宝改版只改这一个文件）
 ├── session_manager.py            # 会话文件 I/O
 ├── session_flow.py               # 会话恢复/捕获编排
 ├── config.py                     # 配置解析
-└── models.py                     # 数据模型（纯数据结构，不含序列化逻辑）
+└── models.py                     # 数据模型（含 VisualStage/VisualState/VisualCommandResult）
 tests/
 ├── test_config.py                # 配置解析测试
 ├── test_models.py                # 数据模型测试
 └── test_text_extraction.py       # 文本提取测试（价格/销量/好评率正则）
-.cache/taobao-search-skill/       # 会话缓存与截图（自动创建，已 gitignore）
+.cache/taobao-search-skill/       # 会话缓存 + 视觉状态 + 截图（自动创建，已 gitignore）
 ```
 
-**测试：** 53 个单元测试覆盖配置解析、数据模型、文本提取正则。浏览器相关逻辑因需要真实浏览器环境，通过实际运行验证。
-
-## 工作流
+## 视觉模式工作流
 
 ```
-用户描述需求 → Agent 前置检查(会话/依赖) → 理解意图 → 构造参数 → exec taobao.py search
-    → taobao.py: 恢复会话→登录检测→搜索→全量提取数据→加购→返回JSON(含好评率)
-    → Agent 解读 JSON → 按好评率分类(达标/不达标/未知/失败) → 向用户汇报
-    → [如需登录/验证] Agent 通知用户 → 用户完成后 → exec taobao.py resume
+用户描述需求
+    ↓
+Agent 解析意图 → 构造参数
+    ↓
+taobao.py search --keyword "..." --visual
+    ├── 打开浏览器、恢复会话、登录检测
+    ├── 执行搜索
+    ├── 截图搜索结果页 → 保存
+    ├── 收集候选商品列表
+    └── 返回 JSON（screenshot + items）
+    ↓
+Agent Read 截图 + 查看 items
+    ├── 视觉分析商品卡片：价格、标题、店铺类型
+    ├── 选择要检查的商品
+    └── 决定：open --index N
+    ↓
+taobao.py open --task-id X --index N
+    ├── 打开详情页
+    ├── 截图 + 提取 SKU 结构 + 页面文本
+    └── 返回 JSON（screenshot + sku_groups + detail_price）
+    ↓
+Agent Read 截图 + sku_groups
+    ├── 看到 SKU 选项区：颜色/芯片/内存/硬盘...
+    ├── 逐一选择：sku-select --label "芯片" --value "M4"
+    ├── 每步截图确认选中状态 + 价格更新
+    └── 全部选好后确认价格是否匹配预算
+    ↓
+taobao.py cart-add --task-id X
+    ├── 点击"加入购物车"
+    ├── 截图确认浮层
+    └── 返回 JSON（screenshot）
+    ↓
+Agent Read 截图 → 确认"已成功加入购物车"
+    ↓
+[重复 open → sku-select → cart-add 加购更多商品]
+    ↓
+taobao.py cart-view --task-id X
+    ├── 打开购物车页
+    └── 返回 JSON（screenshot + cart_item_count）
+    ↓
+Agent Read 截图 → 确认所有商品 → 汇报用户
 ```
+
+## 传统模式 vs 视觉模式
+
+| 维度 | 传统模式（v2） | 视觉模式（v3）【推荐】 |
+|------|--------------|---------------------|
+| Agent 角色 | 参数填写器 | 视觉决策者 |
+| 操作粒度 | 一键流水线 | 原子操作自由组合 |
+| SKU 选择 | 文本子串匹配 | 逐个选项选择，每步截图确认 |
+| 异常处理 | 返回错误码 | AI 看图判断，`decide` 逃生舱 |
+| 风险识别 | 无 | 视觉识别官换/翻新等风险词 |
+| 页面变化适应 | 选择器失效即崩溃 | Agent 视觉适应，DOM 辅助 |
+| 速度 | 快（一次性） | 较慢（逐步交互） |
+| 适用场景 | 简单明确需求 | 复杂 SKU、需视觉确认、高风险 |
 
 ## 配置参数
+
+### 视觉模式子命令
+
+| 命令 | 必需参数 | 可选参数 |
+|------|---------|---------|
+| `search --visual` | `--keyword` | `--max-candidates`, `--price-min/max`, `--min-sales`, `--require-free-shipping`, `--require-tmall`, `--headless` |
+| `open` | `--task-id`, `--index` | `--headless` |
+| `sku-select` | `--task-id`, `--label`, `--value` | `--headless` |
+| `cart-add` | `--task-id` | `--headless` |
+| `cart-view` | `--task-id` | `--headless` |
+| `dom` | `--task-id` | `--url`, `--headless` |
+| `wait` | `--task-id` | `--condition`, `--timeout-ms`, `--wait-seconds`, `--url` |
+| `decide` | `--task-id`, `--action` | `--value`, `--url`, `--headless` |
+
+### 传统模式 search 参数
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `--keyword` | str | `Sony headphones` | 搜索关键词 |
-| `--rating-threshold` | float | `0` | 好评率阈值（Agent 用于分类汇报，脚本不筛选） |
+| `--rating-threshold` | float | `0` | 好评率阈值 |
 | `--max-candidates` | int | `5` | 最多检查的候选商品数 |
 | `--price-min` | float | — | 最低价格过滤（元） |
 | `--price-max` | float | — | 最高价格过滤（元） |
 | `--min-sales` | int | — | 最低付款人数 |
 | `--require-free-shipping` | flag | — | 只要包邮商品 |
 | `--require-tmall` | yes/no | — | 天猫/淘宝店筛选 |
-| `--sku-keywords` | str | — | SKU 关键词，空格分隔（如 `"16G 512G"`） |
+| `--sku-keywords` | str | — | SKU 关键词，空格分隔 |
 | `--no-screenshot` | flag | — | 禁用证据截图 |
-| `--no-manual-approval` | flag | — | 禁用人工接管（遇到登录/验证直接返回中断信号） |
-| `--headless` | flag | — | 无头模式运行浏览器 |
-| `--session-state-path` | str | `.cache/...` | 会话持久化文件路径 |
-| `--session-strategy` | str | `storage_state` | 会话恢复策略：`storage_state` / `cookie_localstorage` / `none` |
-| `--report-channel` | str | `feishu` | 结果回传通道 |
-| `--no-session-auto-save` | flag | — | 登录后不自动保存会话 |
+| `--no-manual-approval` | flag | — | 禁用人工接管 |
+| `--headless` | flag | — | 无头模式 |
+| `--visual` | flag | — | **启用视觉模式** |
 
 ## 环境要求
 

@@ -17,11 +17,12 @@ from models import MatchedItem
 from taobao_selectors import (
     ACCESS_BLOCKED_SIGNALS, ADD_TO_CART_BUTTONS, CAPTCHA_BG_SELECTORS,
     CAPTCHA_PANEL_SELECTORS, CAPTCHA_SLIDER_BTN_SELECTORS,
-    CART_ITEM_SELECTORS, LOGGED_IN_INDICATORS, LOGIN_COOKIE_NAMES,
-    LOGIN_PAGE_URL_SIGNALS, MIDDLEWARE_OVERLAY_HIDE_JS, NOT_LOGGED_IN_TEXT,
-    POPUP_CLOSE_BUTTONS, PRICE_SELECTORS, PRODUCT_CARD_CLIMB_SELECTORS,
-    PRODUCT_LINK_SELECTORS, RATING_SELECTORS, SALES_COUNT_SELECTORS,
-    SEARCH_INPUT, SEARCH_SUBMIT, SKU_OPTION_SELECTORS, SKU_VALUE_SELECTOR,
+    CART_CONFIRM_POPUP, CART_ITEM_SELECTORS, LOGGED_IN_INDICATORS,
+    LOGIN_COOKIE_NAMES, LOGIN_PAGE_URL_SIGNALS, MIDDLEWARE_OVERLAY_HIDE_JS,
+    NOT_LOGGED_IN_TEXT, POPUP_CLOSE_BUTTONS, PRICE_SELECTORS,
+    PRODUCT_CARD_CLIMB_SELECTORS, PRODUCT_LINK_SELECTORS, RATING_SELECTORS,
+    SALES_COUNT_SELECTORS, SEARCH_INPUT, SEARCH_SUBMIT,
+    SKU_GROUP_LABEL_SELECTORS, SKU_OPTION_SELECTORS, SKU_VALUE_SELECTOR,
 )
 from session_manager import SessionSnapshot
 from slider_solver import SliderSolver
@@ -740,6 +741,298 @@ class BrowserAdapter:
         page.screenshot(path=str(path), full_page=True)
         print(f"[browser] capture evidence: {path}")
         return str(path)
+
+    # ──────────────────────────────────────────────
+    # Visual Agent: Perception (Screenshot + DOM)
+    # ──────────────────────────────────────────────
+
+    def capture_viewport_screenshot(self, name: str) -> str:
+        page = self._ensure_page()
+        self.artifact_dir.mkdir(parents=True, exist_ok=True)
+        path = self.artifact_dir / f"{name}.png"
+        page.screenshot(path=str(path), full_page=False)
+        print(f"[browser] capture viewport screenshot: {path}")
+        return str(path)
+
+    def get_page_text(self, max_chars: int = 2000) -> str:
+        page = self._ensure_page()
+        with suppress(Exception):
+            text = page.evaluate("""() => {
+                const body = document.body;
+                if (!body) return '';
+                const clone = body.cloneNode(true);
+                clone.querySelectorAll('script, style, noscript, [hidden], [aria-hidden="true"]').forEach(el => el.remove());
+                return (clone.innerText || '').trim();
+            }""")
+            if text:
+                return text[:max_chars]
+        return ""
+
+    def get_visible_dom(self) -> dict[str, Any]:
+        """Extract visible DOM with semantic annotations: buttons, links, inputs, SKU options.
+
+        Returns a compact representation the AI can use alongside screenshots to identify
+        clickable elements and understand page structure.
+        """
+        page = self._ensure_page()
+        with suppress(Exception):
+            return page.evaluate("""() => {
+                const viewportH = window.innerHeight;
+                const viewportW = window.innerWidth;
+
+                function isVisible(el) {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width === 0 || rect.height === 0) return false;
+                    if (rect.bottom < 0 || rect.top > viewportH) return false;
+                    if (rect.right < 0 || rect.left > viewportW) return false;
+                    const style = window.getComputedStyle(el);
+                    if (style.visibility === 'hidden' || style.display === 'none') return false;
+                    if (parseFloat(style.opacity) === 0) return false;
+                    // Check if obscured by another element at center
+                    const cx = rect.left + rect.width / 2;
+                    const cy = rect.top + rect.height / 2;
+                    const topEl = document.elementFromPoint(cx, cy);
+                    if (topEl && topEl !== el && !el.contains(topEl)) return false;
+                    return true;
+                }
+
+                function getSemanticRole(el) {
+                    const tag = el.tagName.toLowerCase();
+                    const role = el.getAttribute('role') || '';
+                    const type = (el.getAttribute('type') || '').toLowerCase();
+                    if (tag === 'button' || role === 'button') return 'button';
+                    if (tag === 'a' && el.getAttribute('href')) return 'link';
+                    if (tag === 'input' && (type === 'text' || type === 'search')) return 'text_input';
+                    if (tag === 'input' && type === 'submit') return 'button';
+                    if (tag === 'select') return 'select';
+                    if (tag === 'textarea') return 'text_input';
+                    return tag;
+                }
+
+                function getSkuInfo(el) {
+                    const cls = (el.getAttribute('class') || '').toLowerCase();
+                    const text = (el.innerText || el.textContent || '').trim().slice(0, 60);
+                    if (cls.includes('sku') || cls.includes('prop')) return 'sku_option';
+                    if (cls.includes('valueitem') || cls.includes('skuvalue')) return 'sku_value';
+                    return null;
+                }
+
+                const result = {url: window.location.href, title: document.title, elements: []};
+
+                // Buttons
+                document.querySelectorAll('button, [role="button"], a.btn, span.btn').forEach(el => {
+                    if (!isVisible(el)) return;
+                    const rect = el.getBoundingClientRect();
+                    const text = (el.innerText || el.textContent || '').trim().slice(0, 80);
+                    if (!text) return;
+                    result.elements.push({
+                        role: 'button',
+                        text: text,
+                        selector: el.id ? '#' + el.id : null,
+                        box: {x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height)}
+                    });
+                });
+
+                // Links
+                document.querySelectorAll('a[href]').forEach(el => {
+                    if (!isVisible(el)) return;
+                    const text = (el.innerText || el.textContent || '').trim().slice(0, 80);
+                    const href = el.getAttribute('href') || '';
+                    if (!text && !href) return;
+                    const rect = el.getBoundingClientRect();
+                    result.elements.push({
+                        role: 'link',
+                        text: text,
+                        href: href.slice(0, 120),
+                        box: {x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height)}
+                    });
+                });
+
+                // Inputs
+                document.querySelectorAll('input:not([type="hidden"]), textarea, select').forEach(el => {
+                    if (!isVisible(el)) return;
+                    const rect = el.getBoundingClientRect();
+                    const placeholder = el.getAttribute('placeholder') || '';
+                    result.elements.push({
+                        role: getSemanticRole(el),
+                        placeholder: placeholder.slice(0, 60),
+                        selector: el.id ? '#' + el.id : (el.name ? '[name="' + el.name + '"]' : null),
+                        box: {x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height)}
+                    });
+                });
+
+                // SKU options (Taobao-specific)
+                document.querySelectorAll('[class*="skuItem"], [class*="valueItem"], li[class*="sku"], .J_TSaleProp li, .tb-prop li').forEach(el => {
+                    if (!isVisible(el)) return;
+                    const text = (el.innerText || el.textContent || '').trim().slice(0, 40);
+                    if (!text || text.length > 40) return;
+                    const rect = el.getBoundingClientRect();
+                    const cls = el.getAttribute('class') || '';
+                    const disabled = cls.includes('disabled') || cls.includes('out-of');
+                    const selected = cls.includes('selected') || cls.includes('active') || cls.includes('isSelected');
+                    result.elements.push({
+                        role: 'sku_option',
+                        text: text,
+                        disabled: disabled,
+                        selected: selected,
+                        box: {x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height)}
+                    });
+                });
+
+                return result;
+            }""")
+        return {"url": "", "title": "", "elements": []}
+
+    def get_sku_structure(self) -> list[dict[str, Any]]:
+        """Extract SKU groups with labels and selectable values from the current page."""
+        page = self._ensure_page()
+        with suppress(Exception):
+            page.wait_for_selector('[class*="sku"]', timeout=5000)
+        with suppress(Exception):
+            groups = page.evaluate("""() => {
+                const groups = [];
+                // Find SKU property groups (dl.prop structure or skuGroup containers)
+                const groupEls = document.querySelectorAll('dl[class*="prop"], [class*="skuGroup"], .J_TSaleProp');
+                for (const g of groupEls) {
+                    const labelEl = g.querySelector('dt, [class*="label"], [class*="title"]');
+                    const label = labelEl ? labelEl.textContent.trim().replace(/[:：]$/, '').trim() : '';
+                    const values = [];
+                    const valueEls = g.querySelectorAll('dd a, li a, [class*="valueItem"]:not([class*="label"]), [class*="skuItem"]');
+                    for (const v of valueEls) {
+                        const text = (v.innerText || v.textContent || '').trim();
+                        if (!text || text.length > 40) continue;
+                        const cls = v.getAttribute('class') || '';
+                        values.push({
+                            text: text,
+                            disabled: cls.includes('disabled') || cls.includes('out-of'),
+                            selected: cls.includes('selected') || cls.includes('active') || cls.includes('isSelected')
+                        });
+                    }
+                    if (label || values.length) groups.push({label, values});
+                }
+                return groups;
+            }""")
+            if groups:
+                return groups
+        return []
+
+    def get_element_state(self, text: str) -> dict[str, Any] | None:
+        """Check if an element with given text is visible, clickable, and not obscured."""
+        page = self._ensure_page()
+        with suppress(Exception):
+            return page.evaluate("""(searchText) => {
+                const candidates = [];
+                const walker = document.createTreeWalker(
+                    document.body, NodeFilter.SHOW_ELEMENT,
+                    {acceptNode: n => n.innerText && n.innerText.trim().includes(searchText) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP}
+                );
+                let node;
+                while ((node = walker.nextNode()) && candidates.length < 10) {
+                    const rect = node.getBoundingClientRect();
+                    if (rect.width === 0 || rect.height === 0) continue;
+                    const style = window.getComputedStyle(node);
+                    if (style.display === 'none' || style.visibility === 'hidden') continue;
+                    const cx = rect.left + rect.width / 2;
+                    const cy = rect.top + rect.height / 2;
+                    const topEl = document.elementFromPoint(cx, cy);
+                    candidates.push({
+                        tag: node.tagName.toLowerCase(),
+                        text: (node.innerText || '').trim().slice(0, 60),
+                        visible: true,
+                        clickable: topEl === node || node.contains(topEl),
+                        box: {x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height)}
+                    });
+                }
+                return candidates.length > 0 ? candidates[0] : null;
+            }""", text)
+        return None
+
+    # ──────────────────────────────────────────────
+    # Visual Agent: Atomic Actions
+    # ──────────────────────────────────────────────
+
+    def select_sku(self, label_keyword: str, value_keyword: str) -> bool:
+        """Select a SKU option by group label and value text."""
+        page = self._ensure_page()
+        with suppress(Exception):
+            return page.evaluate("""([labelKw, valueKw]) => {
+                const groups = document.querySelectorAll('dl[class*="prop"], [class*="skuGroup"], .J_TSaleProp');
+                for (const g of groups) {
+                    const labelEl = g.querySelector('dt, [class*="label"], [class*="title"]');
+                    const label = labelEl ? labelEl.textContent.trim() : '';
+                    if (!label.includes(labelKw)) continue;
+                    const values = g.querySelectorAll('dd a, li a, [class*="valueItem"], [class*="skuItem"]');
+                    for (const v of values) {
+                        const text = (v.innerText || v.textContent || '').trim();
+                        const cls = v.getAttribute('class') || '';
+                        if (text.includes(valueKw) && !cls.includes('disabled') && !cls.includes('out-of')) {
+                            v.click();
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }""", [label_keyword, value_keyword])
+        return False
+
+    def click_element_by_text(self, text: str, role: str = "any") -> bool:
+        """Find and click a visible element containing the given text."""
+        page = self._ensure_page()
+        # Try Playwright locator first (handles shadow DOM, iframes)
+        with suppress(Exception):
+            locator = page.locator(f"text={text}").first
+            if locator.is_visible(timeout=3000):
+                self._human_click(page, locator)
+                self._human_wait(0.3, 0.8)
+                return True
+        # Try role-specific locators
+        roles = [role] if role != "any" else ["button", "link"]
+        for r in roles:
+            with suppress(Exception):
+                locator = page.locator(f"{r}:has-text('{text}')").first
+                if locator.is_visible(timeout=2000):
+                    self._human_click(page, locator)
+                    self._human_wait(0.3, 0.8)
+                    return True
+        # Fallback: evaluate click by text match
+        with suppress(Exception):
+            clicked = page.evaluate("""(t) => {
+                const els = document.querySelectorAll('button, a, [role="button"], span, div');
+                for (const el of els) {
+                    if ((el.innerText || el.textContent || '').trim().includes(t)) {
+                        const rect = el.getBoundingClientRect();
+                        if (rect.width > 0 && rect.height > 0) {
+                            el.click();
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }""", text)
+            if clicked:
+                self._human_wait(0.3, 0.8)
+                return True
+        return False
+
+    def scroll_page(self, direction: str = "down", amount: int = 500) -> None:
+        """Scroll the page. direction: 'up' or 'down'."""
+        page = self._ensure_page()
+        sign = -1 if direction == "up" else 1
+        self._human_scroll(page, page.evaluate("window.scrollY") + sign * amount)
+
+    def wait_for_element(self, text: str | None = None, selector: str | None = None,
+                         timeout_ms: int = 10000) -> bool:
+        """Wait for an element to appear on the page."""
+        page = self._ensure_page()
+        if selector:
+            with suppress(Exception):
+                page.wait_for_selector(selector, timeout=timeout_ms)
+                return True
+        if text:
+            with suppress(Exception):
+                page.wait_for_selector(f"text={text}", timeout=timeout_ms)
+                return True
+        return False
 
     # ──────────────────────────────────────────────
     # Human-Like Behavior: Bezier Mouse Movement

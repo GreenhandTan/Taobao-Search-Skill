@@ -262,3 +262,54 @@ CAPTCHA_TEXT_FALLBACKS = [
     "text=请拖动滑块",
     "text=请先完成验证",
 ]
+
+# ──────────────────────────────────────────────
+# Visual Agent: SKU Group Labels & Structure
+# ──────────────────────────────────────────────
+
+SKU_GROUP_LABEL_SELECTORS = [
+    "dt[class*='prop']",
+    "[class*='sku'] dt",
+    ".tb-prop dt",
+    "dl[class*='prop'] dt",
+    ".tm-prop-label",
+    "[class*='skuLabel']",
+    "[class*='propTitle']",
+    "[class*='skuTitle']",
+]
+
+SKU_GROUP_VALUE_CONTAINER = [
+    "dd[class*='prop']",
+    "dd.tb-prop",
+    "dl[class*='prop'] dd",
+    "[class*='skuGroup'] [class*='value']",
+]
+
+# ──────────────────────────────────────────────
+# Visual Agent: Cart Confirmation & Detail Page
+# ──────────────────────────────────────────────
+
+CART_CONFIRM_POPUP = [
+    ".J_ItemCart",
+    ".cart-popup",
+    "[class*='cartSuccess']",
+    "text=已成功加入购物车",
+    ".tm-cart-popup",
+    ".tb-cart-popup",
+    "[class*='addToCartSuccess']",
+]
+
+PRODUCT_DETAIL_IMAGE_SELECTORS = [
+    "#J_ImgBod",
+    ".tb-booth img",
+    ".tb-pic img",
+    "[class*='preview'] img",
+    "#J_UlThumb img",
+]
+
+SORT_OPTION_SELECTORS = [
+    ".sort-bar a",
+    "[class*='sort'] a",
+    ".J_Sort a",
+    ".sort-row a",
+]
