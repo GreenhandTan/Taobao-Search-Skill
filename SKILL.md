@@ -1,403 +1,446 @@
 ---
 name: Taobao-Search-Skill
-description: "Search Taobao/Tmall, visually inspect products, select SKUs, add to cart. AI is the brain: sees screenshots, reads DOM, makes decisions in real-time. Script is pure hands: executes atomic browser operations on command."
-version: "3.0.0"
+description: "Search Taobao/Tmall, inspect products, select SKUs, add to cart. Persistent browser session with stdin/stdout JSON protocol. AI decides, script executes."
+version: "4.0.0"
 allowed-tools: [Bash, Read]
 model: "多模态（默认假设支持视觉）"
 ---
 
-# Taobao-Search-Skill v3
+# Taobao-Search-Skill v4
 
 > **合规声明：** 本 Skill 仅用于自动化你自己的淘宝/天猫账号操作。不得绕过平台安全控制、不得用于批量注册/刷单/爬虫等违反淘宝服务条款的行为。使用者对自身操作承担全部责任。
 
-## 核心架构：AI 作为视觉大脑
+## 核心架构：Session 模式
+
+浏览器**只启动一次**，通过 stdin/stdout JSON 协议接收命令。命令间共享同一浏览器实例，无需反复启动。
 
 ```
 用户需求 → 你(理解意图)
               ↓
-         taobao.py search --visual  → 截图 + 商品列表
+         Bash: 启动 session 进程（浏览器打开一次）
               ↓
-         你 Read 截图 → 视觉分析 → 决定"打开第3个看看"
+         Bash: stdin 发 {"cmd":"search","keyword":"MacBook Air M4"}
+              ← stdout 收 {"data":{"items":[...8个商品...]}}
               ↓
-         taobao.py open --index 2  → 详情页截图 + SKU结构
+         你看 JSON 数据 → 决定"打开第3个"
               ↓
-         你 Read 截图 → 看到SKU选项 → 判断"选M4芯片+16G内存+512G硬盘"
+         Bash: stdin 发 {"cmd":"open","index":2}
+              ← stdout 收 {"data":{"sku_groups":[{"label":"芯片","values":[...]},...]}}
               ↓
-         taobao.py sku-select --label "存储" --value "512G"
+         你看 JSON 数据 → 决定"选M4+16G+512G"
               ↓
-         你 Read 截图 → 确认选中+价格正确 → 加购
+         Bash: stdin 发 {"cmd":"select-sku","selections":[{"label":"芯片","value":"M4"},{"label":"内存","value":"16G"},{"label":"硬盘","value":"512G"}]}
+              ← stdout 收 {"data":{"final_price":5999,"all_selected":true}}
               ↓
-         taobao.py cart-add → cart-view → 汇报用户
+         5999 < 6000 → 加购
+              ↓
+         Bash: stdin 发 {"cmd":"cart-add"}
+              ← stdout 收 {"data":{"cart_added":true,"confirmed":true}}
+              ↓
+         汇报用户
 ```
 
-**你（AI Agent）是决策者：** 看截图、读 DOM、判断对错、选择策略、处理异常。
-**taobao.py 是执行手：** 打开浏览器、点击元素、输入文字、截图——纯操作，不做判断。
+**你（AI Agent）是决策者：** 解析用户意图、分析搜索结果、选择商品和 SKU、确认价格、判断风险。
+**session 进程是执行者：** 操控浏览器、提取数据、返回结构化 JSON。不做决策。
 
 ---
 
-## 模式选择
-
-你有两种运作模式：
-
-### 传统模式（`search` 不带 `--visual`）
-一次性流水线：搜索→筛选→加购→返回 JSON。适合简单明确的需求。脚本内硬编码选择器做匹配——快但不够灵活。
-
-### 视觉模式（`search --visual` + 后续子命令）【推荐默认】
-逐步交互：每步截图返回给你，你看了再决定下一步。**这是本 Skill 推荐的主要模式**，尤其适合：
-- SKU 规格复杂（多级选项：颜色→芯片→内存→硬盘）
-- 需要视觉确认（"确定是黑色的""确认不是官换机"）
-- 价格随 SKU 变化（不同配置不同价）
-- 页面布局异常（弹窗、活动层、改版）
-
----
-
-## 一、感知层：双重输入（截图 + DOM）
-
-你不能只用一种信息来源。截图告诉你"页面长什么样"，DOM 告诉你"可以操作什么"。两者互补。
-
-### 1.1 截图（视觉感知）
-
-每个子命令返回的 JSON 中，`screenshot` 字段是 PNG 文件路径。**每次收到截图后必须用 Read 工具查看**，关注：
-
-| 页面类型 | 重点关注 |
-|---------|---------|
-| 搜索结果页 | 商品卡片（图+标题+价格）、天猫标识、包邮标签、排序栏、筛选条件 |
-| 商品详情页 | SKU 选择区（多组选项：颜色/尺寸/版本）、实时价格、好评率、主图 |
-| SKU 选择后 | 选中项是否高亮、价格是否更新、是否有库存提示 |
-| 加购后 | 是否弹出"已成功加入购物车"确认浮层 |
-| 购物车页 | 商品列表、勾选状态、数量、总价 |
-
-**视觉风险识别：** 看截图时主动识别以下危险信号：
-- 标题含 "官换""翻新""后封""99新""二手" → 警告用户
-- 大量活动弹窗/悬浮层遮挡 → 先用 `decide` 点击关闭
-- 验证码/滑块 → 告知用户手动处理
-- 页面空白/加载失败 → 检查 URL 或重试
-
-### 1.2 DOM（结构化感知）
-
-`dom` 子命令提取可见区域的 DOM 元素，标注语义角色（button/link/text_input/sku_option）。**当截图看不清或不确认时，用 `dom` 补充：**
+## 一、启动会话
 
 ```bash
-python scripts/taobao.py dom --task-id <ID>
+python scripts/taobao.py session --task-id <自定义ID>
 ```
 
-返回的 `data.dom.elements` 包含每个元素的 `role`、`text`、`box`（坐标尺寸），以及 SKU 选项的 `disabled`/`selected` 状态。
+首次启动会自动打开浏览器并检查登录状态。如果未登录，会等待用户手动完成登录（弹出浏览器窗口）。
 
-**双重感知的典型用法：**
-1. 截图看到 SKU 区域 → `dom` 确认有哪些可选值和禁用值
-2. 截图看到按钮但不确定是否可点击 → `dom` 看元素状态
-3. 截图看到价格但小数位模糊 → 用 `data` 中的 `price_value` 精确字段
+启动后，进程进入等待状态，从 stdin 逐行读取 JSON 命令，每条命令处理完后将 JSON 结果写到 stdout。
+
+**退出方式：** 发送 `{"cmd": "quit"}` 或关闭 stdin（进程自动退出，浏览器关闭）。
 
 ---
 
-## 二、行动层：原子操作命令集
+## 二、命令参考
 
-所有命令都独立打开浏览器、恢复会话、执行单一操作、截图、关闭。状态通过 `--task-id` 在命令间传递。
+### 2.1 search — 搜索商品
 
-### 2.1 核心命令速查
-
-| 命令 | 作用 | 关键参数 |
-|------|------|---------|
-| `search --visual` | 搜索 + 截图搜索结果 | `--keyword`, `--max-candidates N`, `--price-min/max`, `--require-tmall` |
-| `open` | 打开第N个搜索结果，截图详情页 | `--task-id`, `--index N` |
-| `sku-select` | 选择一个 SKU 选项 | `--task-id`, `--label "颜色"`, `--value "黑色"` |
-| `cart-add` | 点击加入购物车 | `--task-id` |
-| `cart-view` | 打开购物车页截图 | `--task-id` |
-| `dom` | 提取可见 DOM 结构 | `--task-id`, `--url`（可选） |
-| `wait` | 等待条件满足 | `--task-id`, `--condition "selector:."` 或 `"text:"` 或 `"networkidle"` |
-| `decide` | **逃生舱**：通用操作 | `--task-id`, `--action click\|scroll\|hover\|press\|type\|navigate`, `--value "..."` |
-
-### 2.2 `decide` 详解（处理意外情况）
-
-当页面出现预期外的弹窗、广告、验证，或你需要非标准操作时：
-
-```bash
-# 点击任意可见文字
-python scripts/taobao.py decide --task-id X --action click --value "关闭"
-
-# 滚动页面（看更多内容）
-python scripts/taobao.py decide --task-id X --action scroll --value "down:800"
-
-# 悬停在元素上（触发下拉菜单）
-python scripts/taobao.py decide --task-id X --action hover --value "颜色"
-
-# 键盘按键
-python scripts/taobao.py decide --task-id X --action press --value "Escape"
-
-# 直接跳转 URL
-python scripts/taobao.py decide --task-id X --action navigate --value "https://..."
-
-# 仅截图（不操作）
-python scripts/taobao.py decide --task-id X --action screenshot
+```json
+{"cmd": "search", "keyword": "MacBook Air M4 16G 512G", "price_max": 6000, "require_tmall": true}
 ```
 
-### 2.3 操作前的登录检查
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| keyword | string | **必填**，搜索关键词 |
+| price_min | float | 最低价格 |
+| price_max | float | 最高价格 |
+| min_sales | int | 最低销量 |
+| require_free_shipping | bool | 仅包邮 |
+| require_tmall | bool | true=仅天猫，false=仅淘宝 |
+| max_candidates | int | 最多返回商品数，默认 20 |
 
-每次开始新任务前，建议先检查会话状态：
+**返回 data：**
 
-```bash
-python scripts/taobao.py check-session
+```json
+{
+  "keyword": "MacBook Air M4 16G 512G",
+  "items": [
+    {
+      "index": 0,
+      "title": "Apple MacBook Air M4 16G+512G 13寸...",
+      "url": "https://item.taobao.com/...",
+      "price": "¥5499.00",
+      "price_value": 5499.0,
+      "sales_count": 2300,
+      "rating": 0.98,
+      "is_tmall": true,
+      "free_shipping": true
+    }
+  ],
+  "items_count": 8
+}
 ```
 
-如果 `session_exists: false` 或 `cookie_count: 0`，告知用户："首次使用需要手动登录淘宝，过程中会弹出浏览器窗口。登录完成后告诉我继续。"
+### 2.2 open — 打开商品详情
+
+```json
+{"cmd": "open", "index": 2}
+```
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| index | int | **必填**，商品在搜索结果中的索引（从 0 开始） |
+
+**返回 data：**
+
+```json
+{
+  "item": {"title": "...", "price": 5499.0, "sales_count": 2300, "rating": 0.98, ...},
+  "sku_groups": [
+    {
+      "label": "芯片",
+      "values": [
+        {"text": "M4", "disabled": false, "selected": false},
+        {"text": "M3", "disabled": false, "selected": false}
+      ]
+    },
+    {
+      "label": "内存",
+      "values": [
+        {"text": "16G", "disabled": false, "selected": false},
+        {"text": "24G", "disabled": false, "selected": false}
+      ]
+    }
+  ],
+  "detail_price": 5499.0
+}
+```
+
+### 2.3 select-sku — 选择 SKU 规格
+
+```json
+{"cmd": "select-sku", "selections": [
+  {"label": "芯片", "value": "M4"},
+  {"label": "内存", "value": "16G"},
+  {"label": "硬盘", "value": "512G"}
+]}
+```
+
+也支持单选：
+
+```json
+{"cmd": "select-sku", "selections": {"label": "芯片", "value": "M4"}}
+```
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| selections | object 或 array | **必填**，每个选择包含 label（SKU 组名）和 value（选项值） |
+
+**返回 data：**
+
+```json
+{
+  "all_selected": true,
+  "selections": [
+    {"label": "芯片", "value": "M4", "ok": true},
+    {"label": "内存", "value": "16G", "ok": true},
+    {"label": "硬盘", "value": "512G", "ok": true}
+  ],
+  "final_price": 5999.0,
+  "sku_groups": [...更新后的SKU结构...]
+}
+```
+
+`all_selected: false` 表示部分选择失败，检查 `selections` 中 `ok: false` 的项。
+
+### 2.4 cart-add — 加入购物车
+
+```json
+{"cmd": "cart-add"}
+```
+
+**返回 data：**
+
+```json
+{
+  "cart_added": true,
+  "confirmed": true,
+  "item_index": 2
+}
+```
+
+`confirmed` 表示是否看到了"已加入购物车"的确认弹窗。
+
+### 2.5 cart-view — 查看购物车
+
+```json
+{"cmd": "cart-view"}
+```
+
+**返回 data：**
+
+```json
+{
+  "cart_item_count": 3,
+  "items": [...本次会话中处理过的商品列表...]
+}
+```
+
+### 2.6 dom — 提取页面 DOM 结构
+
+```json
+{"cmd": "dom", "url": "https://..."}
+```
+
+`url` 可选，不提供则使用当前页面。返回可见区域的按钮、链接、输入框、SKU 选项等元素，包含坐标和语义角色。
+
+### 2.7 screenshot — 截取当前页面
+
+```json
+{"cmd": "screenshot"}
+```
+
+返回当前视口截图路径和页面文本摘要。
+
+### 2.8 quit — 退出会话
+
+```json
+{"cmd": "quit"}
+```
+
+关闭浏览器，退出进程。
 
 ---
 
-## 三、决策层：你的自主推理框架
+## 三、响应格式
 
-### 3.1 任务分解
+所有命令返回统一 JSON 结构：
 
-收到用户需求后，先在心里拆解为步骤序列，不要一次性全交给脚本。例如：
+```json
+{
+  "status": "success",         // "success" 或 "error"
+  "task_id": "taobao-abc123",
+  "screenshot": ".cache/.../xxx.png",   // 截图文件路径（可用 Read 工具查看）
+  "page_text_summary": "...",           // 页面文本前 500 字符
+  "data": { ... }                       // 命令特定的返回数据
+}
+```
 
-> 用户："帮我找6000以下M4芯片MacBook Air，16+512，13或15寸"
+错误时：
 
-拆解为：
-1. 搜索 "MacBook Air M4 16G 512G" → 看搜索结果
-2. 逐个打开看起来合适的商品 → 看详情页
-3. 每个商品：选芯片(M4) → 选内存(16G) → 选硬盘(512G) → 看价格是否 < 6000
-4. 符合条件的 → 加购 → 看购物车确认
-5. 汇报用户
+```json
+{
+  "status": "error",
+  "task_id": "taobao-abc123",
+  "error": {"message": "No search results. Run 'search' first."}
+}
+```
 
-### 3.2 动态规划
+---
 
-计划不是死的。遇到以下情况即时调整：
+## 四、决策框架
 
-- 搜索结果太少 → 调整关键词（去掉 "M4" 试 "MacBook Air"）
-- 搜索结果太多 → 加 `--max-candidates 10` 或 `--require-tmall yes`
-- 打开商品后发现 SKU 选项不匹配 → 用 `dom` 看实际选项，调整选择策略
-- SKU 有多级依赖 → 一步一步选（先选颜色→截图→再选存储→截图）
+### 4.1 数据驱动优先
 
-### 3.3 异常恢复
+结构化 JSON 数据是你决策的主要依据，**大多数情况下不需要看截图**：
 
-| 情况 | 处理 |
+| 决策 | 数据来源 | 需要截图？ |
+|------|---------|-----------|
+| 选择哪个商品 | `items[].title/price/rating/is_tmall` | ❌ |
+| SKU 是否可选 | `sku_groups[].values[].disabled` | ❌ |
+| 价格是否在预算 | `final_price` | ❌ |
+| 加购是否成功 | `cart_added / confirmed` | ❌ |
+| 标题是否含风险词 | `item.title`（正则匹配） | ❌ |
+
+### 4.2 需要看截图的场景
+
+| 场景 | 原因 |
 |------|------|
-| `status: need_login` | 告知用户手动登录，完成后执行原命令 |
-| `status: need_captcha` | 告知用户完成验证，完成后重试 |
-| `status: failed` + 网络错误 | 等待 3 秒，重试一次 |
-| `status: failed` + `NO_ADD_TO_CART_BUTTON` | 用 `decide --action scroll` 滚动页面再试 |
-| SKU 选项找不到 | 用 `dom` 查看实际 DOM，调整 `--label` `--value` 关键词 |
-| 页面弹窗遮挡 | `decide --action click --value "关闭"` 或 `decide --action press --value "Escape"` |
+| 弹窗/活动遮挡 | JSON 无法反映页面视觉遮挡 |
+| 验证码/滑块 | 需要视觉确认验证码类型 |
+| 加购后确认 | 确认弹窗可能被遗漏 |
+| 异常页面 | 页面空白/加载失败/布局异常 |
+| 调试失败原因 | 元素找不到时排查页面状态 |
 
-### 3.4 风险识别清单
+看截图时使用 Read 工具查看 `screenshot` 字段返回的 PNG 路径。
 
-在汇报用户之前，必须检查以下风险点：
+### 4.3 风险识别
 
-- [ ] 标题是否含 "官换""翻新""后封""二手""99新""展示机"
-- [ ] 价格是否显著低于市场价（>30%）
-- [ ] 店铺是否为天猫旗舰店/授权店
-- [ ] 好评率是否过低（< 90%）
-- [ ] SKU 配置是否与用户需求完全匹配
+在汇报用户前，用正则检查以下风险信号（基于 JSON 数据，不需要截图）：
 
-发现风险时，主动向用户标注并建议跳过。
+```
+标题含 "官换""翻新""后封""99新""二手""展示机" → 警告用户
+价格显著低于市场价（>30%） → 警告用户
+is_tmall=false 且用户要求正品 → 提示风险
+好评率 < 90% → 提示风险
+```
 
 ---
 
-## 四、SKU 选择策略（淘宝核心难点）
+## 五、SKU 选择策略
 
-淘宝 SKU 通常是多级依赖的：选颜色→选项更新→选芯片→选项更新→选内存→...选项更新→价格变化。
+淘宝 SKU 通常是多级依赖的：选颜色→选项更新→选芯片→选项更新→选内存→价格变化。
 
-### 策略 A：逐个选择（推荐）
+### 策略 A：批量选择（推荐）
 
-```bash
-# Step 1: 打开商品详情
-python scripts/taobao.py open --task-id X --index 2
-# → 看截图，看到 SKU 组：颜色、芯片、内存、硬盘
+一次性发送所有选择，脚本内部依次执行：
 
-# Step 2: 选芯片（最关键的规格）
-python scripts/taobao.py sku-select --task-id X --label "芯片" --value "M4"
-# → 看截图，确认选中且价格开始显示
-
-# Step 3: 选内存
-python scripts/taobao.py sku-select --task-id X --label "内存" --value "16G"
-# → 看截图，确认
-
-# Step 4: 选硬盘
-python scripts/taobao.py sku-select --task-id X --label "硬盘" --value "512G"
-# → 看截图，确认最终价格是否在预算内
+```json
+{"cmd": "select-sku", "selections": [
+  {"label": "芯片", "value": "M4"},
+  {"label": "内存", "value": "16G"},
+  {"label": "硬盘", "value": "512G"}
+]}
 ```
 
-### 策略 B：先看 DOM 再决定
+适用于：你对 SKU 结构已经清楚（从 `open` 返回的 `sku_groups` 中获取）。
 
-```bash
-# 如果截图看不清 SKU 有哪些选项
-python scripts/taobao.py dom --task-id X
-# → data.dom.elements 中 role=sku_option 的项列出所有可选值
+### 策略 B：逐个选择 + 确认
 
-# 然后精准选择
-python scripts/taobao.py sku-select --task-id X --label "版本" --value "M4芯片"
+先选最关键的规格，看价格变化后再决定下一步：
+
+```
+1. select-sku {"label":"芯片","value":"M4"}  → 看 final_price
+2. 如果价格合理 → select-sku {"label":"内存","value":"16G"} → 看 final_price
+3. 继续...
 ```
 
-### SKU 选择技巧
+适用于：价格随 SKU 变化大、需要逐步确认预算。
 
-- `--label` 用 SKU 组的标题关键词（"颜色""存储""版本""芯片""内存""硬盘""尺寸"）
-- `--value` 用选项文字的关键部分（"512G" "黑色" "M4" "16G"）
-- 选择后立即截图看价格变化——因为不同 SKU 价格不同
-- 如果一次 `sku-select` 没选中，换成更短的关键词重试
+### 选择技巧
+
+- `label` 用 SKU 组的标题关键词（"颜色""存储""版本""芯片""内存""硬盘""尺寸"）
+- `value` 用选项文字的关键部分（"512G" "黑色" "M4" "16G"）
+- 如果 `ok: false`，尝试用更短的关键词重试
+- `sku_groups` 中 `disabled: true` 的选项不可选（缺货）
 
 ---
 
-## 五、完整工作流示例
+## 六、完整工作流示例
 
 ### 示例：搜索 MacBook Air M4
 
 ```
 用户："帮我找6000以下MacBook Air M4 16+512"
 
-你的完整操作序列：
+你的操作序列：
 
-1. check-session（可选，确认会话正常）
-2. search --keyword "MacBook Air M4" --visual --max-candidates 10 --price-max 6000
-   → Read 截图：看到 10 个搜索结果...
+1. 启动会话
+   python scripts/taobao.py session --task-id macbook-task
 
-3. "第1个和第3个看起来靠谱，先看第1个"
-   open --task-id X --index 0
-   → Read 截图：详情页，看到 SKU 区
+2. 搜索
+   → {"cmd":"search","keyword":"MacBook Air M4 16G 512G","price_max":6000}
+   ← items: 8个候选商品
+   判断：第0个(¥5499,天猫,好评98%)和第2个(¥5899,天猫,好评96%)看起来靠谱
 
-4. sku-select --task-id X --label "芯片" --value "M4"
-   → Read 截图：M4 选中，价格 ¥5499
+3. 打开第0个
+   → {"cmd":"open","index":0}
+   ← sku_groups: 芯片(M4/M3), 内存(16G/24G), 硬盘(256G/512G/1T)
+   判断：有M4+16G+512G可选
 
-5. sku-select --task-id X --label "内存" --value "16G"
-   → Read 截图：16G 选中，价格变 ¥5999
+4. 选择规格
+   → {"cmd":"select-sku","selections":[{"label":"芯片","value":"M4"},{"label":"内存","value":"16G"},{"label":"硬盘","value":"512G"}]}
+   ← final_price: 5999, all_selected: true
+   判断：5999 < 6000，符合预算
 
-6. "5999在预算内，加购"
-   cart-add --task-id X
-   → Read 截图：看到"已成功加入购物车"
+5. 加购
+   → {"cmd":"cart-add"}
+   ← cart_added: true, confirmed: true
 
-7. "再看第3个商品"
-   open --task-id X --index 2
-   → Read 截图：看到标题含"官换机"，警告用户并跳过
+6. 查看购物车
+   → {"cmd":"cart-view"}
+   ← cart_item_count: 1
 
-8. cart-view --task-id X
-   → Read 截图：确认购物车，汇报用户
+7. 退出
+   → {"cmd":"quit"}
+
+汇报用户：
+搜索「MacBook Air M4 16G 512G」完成：
+✅ 已加购：MacBook Air M4 16G+512G 13寸 — ¥5,999.00 — 好评率 98% — 天猫 — 包邮
+请前往购物车确认。
 ```
 
-### 示例：处理异常弹窗
+### 示例：处理异常
 
 ```
-1. search --keyword "蓝牙耳机" --visual
-   → Read 截图：首页有618活动弹窗遮挡
+→ {"cmd":"open","index":3}
+← status: error, "Item has no URL"
+判断：跳过这个商品，试下一个
 
-2. decide --task-id X --action click --value "关闭"
-   → Read 截图：弹窗已关闭，可以继续搜索
+→ {"cmd":"open","index":4}
+← sku_groups: [{label:"颜色", values:[{text:"黑色",disabled:true}]}]
+判断：想要的颜色缺货，跳过
 
-   # 如果 click "关闭" 没关掉，试试：
-   decide --task-id X --action press --value "Escape"
-   → 或 decide --task-id X --action click --value "我知道了"
+→ {"cmd":"select-sku","selections":{"label":"颜色","value":"白色"}}
+← all_selected: false, selections: [{ok: false}]
+判断：选择失败，可能是关键词不匹配。截图排查：
+→ {"cmd":"screenshot"}
+← screenshot: ".cache/.../xxx.png"
+Read 截图 → 看到选项文字是"象牙白"不是"白色"
+→ {"cmd":"select-sku","selections":{"label":"颜色","value":"象牙白"}}
+← all_selected: true, final_price: 3299
 ```
 
 ---
 
-## 六、中断处理：登录与验证码
+## 七、异常处理
 
-### 收到 `need_login` 时
+### 登录失效
 
-1. 告知用户："淘宝未登录，请在弹出的浏览器窗口中手动完成登录，完成后告诉我。"
-2. 等待用户确认
-3. 重新执行刚才失败的命令（会话已保存，会复用）
-
-### 收到 `need_captcha` 时
-
-1. 告知用户："淘宝触发了安全验证，请在浏览器中完成滑块验证，完成后告诉我。"
-2. 等待用户确认
-3. 重新执行刚才失败的命令
-
-### 清除会话重新开始
+搜索或其他命令返回页面内容异常（空结果、被重定向到登录页）时：
 
 ```bash
-python scripts/taobao.py clear-session
-```
-
----
-
-## 七、结果汇报
-
-完成全部操作后，用自然语言向用户汇报。格式参考：
-
-```
-搜索「MacBook Air M4」完成，找到 {N} 件候选商品：
-
-✅ 已加购：
-1. [天猫] MacBook Air M4 16G+512G 13寸 — ¥5,999.00 — 好评率 98% — 包邮
-
-⚠️ 已跳过：
-- 商品A：标题含"官换机"风险词，已跳过
-- 商品B：SKU 选择后价格 ¥6,299 超出预算
-
-截图已保存，如需人工确认可查看。
-```
-
----
-
-## 八、常用维护命令
-
-```bash
-# 检查会话
+# 检查会话状态
 python scripts/taobao.py check-session
 
-# 清除会话
-python scripts/taobao.py clear-session
-
-# 传统模式（快速，不交互）
-python scripts/taobao.py search --keyword "耳机" --price-max 500 --require-free-shipping
-
-# 视觉模式（默认推荐）
-python scripts/taobao.py search --keyword "耳机" --visual --max-candidates 10
+# 如果 session 进程还在运行，发送 quit 重启
+# 重新启动 session，首次启动会自动检测登录
+python scripts/taobao.py session --task-id <ID>
 ```
+
+### 验证码
+
+命令返回的 `screenshot` 中出现滑块/验证码时：
+
+1. 告知用户："淘宝触发了安全验证，请在浏览器中完成验证，完成后告诉我。"
+2. 等待用户确认
+3. 重新发送刚才的命令
+
+### 元素找不到
+
+`cart-add` 返回 `error: "Add-to-cart button not found"` 时：
+
+1. 发送 `{"cmd":"screenshot"}` 查看页面状态
+2. 可能需要滚动页面找到按钮——但当前 session 模式暂不支持滚动操作
+3. 尝试重新 `open` 该商品再 `cart-add`
 
 ---
 
-## 九、依赖与环境
+## 八、依赖与环境
+
+```bash
+pip install -r requirements.txt
+python -m playwright install chromium
+```
 
 - Python 3.11+
-- 安装依赖：`python -m pip install -r requirements.txt`
-- 安装浏览器：`python -m playwright install chromium`
 - 默认会话路径：`.cache/taobao-search-skill/taobao-session.json`
-- 视觉状态目录：`.cache/taobao-search-skill/visual-states/`
 - 截图目录：`.cache/taobao-search-skill/artifacts/`
-
----
-
-## 十、多平台部署
-
-### Claude Code
-
-将本文件复制到 `.claude/skills/taobao-search.md`。
-
-`.claude/settings.local.json` 权限配置：
-```json
-{
-  "permissions": {
-    "allow": [
-      "python scripts/taobao.py search *",
-      "python scripts/taobao.py open *",
-      "python scripts/taobao.py sku-select *",
-      "python scripts/taobao.py cart-add *",
-      "python scripts/taobao.py cart-view *",
-      "python scripts/taobao.py dom *",
-      "python scripts/taobao.py wait *",
-      "python scripts/taobao.py decide *",
-      "python scripts/taobao.py resume",
-      "python scripts/taobao.py check-session",
-      "python scripts/taobao.py clear-session"
-    ]
-  }
-}
-```
-
-### 其他平台（Cursor、Copilot、OpenClaw）
-
-复制本文件到对应 Skill/Rules 目录，核心要求：执行 Shell 命令 + Read 截图 + 解析 JSON。
-
----
-
-## 失败码参考
-
-| 错误码 | 说明 | 你的处理 |
-|--------|------|----------|
-| `LOGIN_REQUIRED` | 未登录 | 告知用户手动登录 |
-| `SEARCH_BLOCKED` | 风控拦截 | 告知用户手动验证 |
-| `NO_VISUAL_STATE` | 任务状态丢失 | 重新 `search --visual` |
-| `INVALID_INDEX` | 商品索引越界 | 检查 `data.items` 长度 |
-| `NO_ADD_TO_CART_BUTTON` | 找不到加购按钮 | 用 `decide` 滚动或截图排查 |
-| `WORKFLOW_ERROR` | 执行异常 | 根据错误信息决定重试/放弃 |
-| `NO_STATE` | resume 无可恢复状态 | 先执行 search |

@@ -1055,6 +1055,26 @@ class BrowserAdapter:
             print(f"[browser] select_sku: no match for label='{label_keyword}' value='{value_keyword}'", file=sys.stderr)
         return False
 
+    def select_skus(self, selections: list[dict[str, str]]) -> tuple[bool, list[dict[str, Any]]]:
+        """Select multiple SKU options sequentially.
+
+        Args:
+            selections: [{"label": "芯片", "value": "M4"}, {"label": "内存", "value": "16G"}, ...]
+
+        Returns:
+            (all_ok, results) where results = [{"label":"...", "value":"...", "ok": True/False}, ...]
+        """
+        results: list[dict[str, Any]] = []
+        for sel in selections:
+            label = sel.get("label", "")
+            value = sel.get("value", "")
+            ok = self.select_sku(label, value)
+            results.append({"label": label, "value": value, "ok": ok})
+            if ok:
+                self._human_wait(0.8, 1.5)
+        all_ok = all(r["ok"] for r in results)
+        return all_ok, results
+
     def click_element_by_text(self, text: str, role: str = "any") -> bool:
         """Find and click a visible element containing the given text."""
         page = self._ensure_page()
